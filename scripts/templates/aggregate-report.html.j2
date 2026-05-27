@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ type }}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 1000px; margin: 0 auto; padding: 20px; background: #f4f7f9; }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; color: #2c3e50; }
+        .metadata { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 30px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .metadata div { margin-bottom: 5px; }
+        .metadata label { font-weight: bold; color: #666; display: block; font-size: 0.85em; text-transform: uppercase; }
+
+        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .status-card { padding: 20px; border-radius: 8px; border-left: 5px solid #ddd; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .status-card.PASS { border-left-color: #2ecc71; }
+        .status-card.FAIL { border-left-color: #e74c3c; }
+        .status-card.INFO { border-left-color: #3498db; }
+        .status-card h3 { margin-top: 0; font-size: 1em; color: #7f8c8d; }
+        .status-card .value { font-size: 1.5em; font-weight: bold; }
+
+        .ai-insights { background: #fff8e1; border: 1px solid #ffe082; padding: 25px; border-radius: 8px; margin-bottom: 30px; position: relative; }
+        .ai-insights::before { content: "AI INSIGHTS"; position: absolute; top: -10px; left: 20px; background: #ffc107; color: #000; padding: 2px 10px; font-size: 0.7em; font-weight: bold; border-radius: 3px; }
+        .ai-insights h2 { margin-top: 0; color: #856404; }
+
+        .build-metrics { margin-bottom: 30px; }
+        .metric-row { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding: 10px 0; }
+        .metric-label { font-weight: 500; }
+        .metric-value { font-family: monospace; }
+
+        .links-section { margin-top: 40px; padding-top: 20px; border-top: 2px solid #eee; }
+        .report-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
+        .report-link { display: block; padding: 15px; background: #f8f9fa; border-radius: 5px; text-decoration: none; color: #3498db; font-weight: 500; border: 1px solid #e9ecef; }
+        .report-link:hover { background: #e9ecef; }
+        
+        .footer { margin-top: 50px; text-align: center; font-size: 0.85em; color: #95a5a6; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: bold; text-transform: uppercase; }
+        .badge.pass { background: #d4edda; color: #155724; }
+        .badge.fail { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{{ type }}</h1>
+        
+        <div class="metadata">
+            <div><label>Run Timestamp</label>{{ timestamp }}</div>
+            <div><label>Baseline</label><code>{{ baseline }}</code></div>
+            <div><label>Target</label><code>{{ target }}</code></div>
+            <div><label>Overall Status</label>
+                <span class="badge {% if overall_status == 'PASS' %}pass{% else %}fail{% endif %}">{{ overall_status }}</span>
+            </div>
+        </div>
+
+        <div class="status-grid">
+            {% for check, data in checks.items() %}
+            <div class="status-card {{ data.status }}">
+                <h3>{{ check }}</h3>
+                <div class="value">{{ data.status }}</div>
+                <div style="font-size: 0.85em; color: #95a5a6; margin-top: 5px;">{{ data.summary }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if ai_insights %}
+        <div class="ai-insights">
+            <h2>Executive Analysis</h2>
+            {{ ai_insights | safe }}
+        </div>
+        {% endif %}
+
+        {% if build_metrics %}
+        <div class="build-metrics">
+            <h2>Build Performance & Logs</h2>
+            <div class="metric-row">
+                <span class="metric-label">Total Duration</span>
+                <span class="metric-value">{{ build_metrics.duration }}</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Log Errors Count</span>
+                <span class="metric-value" style="color: {% if build_metrics.errors > 0 %}#e74c3c{% else %}#2ecc71{% endif %}">{{ build_metrics.errors }}</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Log Warnings Count</span>
+                <span class="metric-value" style="color: #f39c12;">{{ build_metrics.warnings }}</span>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="links-section">
+            <h2>Detailed Reports</h2>
+            <div class="report-links">
+                {% if reports.full %}
+                <a href="{{ reports.full }}" class="report-link">📊 Full Comparison Data</a>
+                {% endif %}
+                {% if reports.aws %}
+                <a href="{{ reports.aws }}" class="report-link">☁️ AWS STS Details</a>
+                {% endif %}
+                {% if reports.gcp %}
+                <a href="{{ reports.gcp }}" class="report-link">☁️ GCP WIF Details</a>
+                {% endif %}
+                {% if reports.ocp %}
+                <a href="{{ reports.ocp }}" class="report-link">🛡️ OCP Admin Gates</a>
+                {% endif %}
+                {% if reports.feature_gates %}
+                <a href="{{ reports.feature_gates }}" class="report-link">⚙️ Feature Gates</a>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="footer">
+            Generated by ROSA Gap Analysis Automation
+        </div>
+    </div>
+</body>
+</html>

@@ -6,3 +6,5 @@ PyYAML==6.0.3
 
 # Template engine for report generation
 Jinja2==3.1.6
+# AI integration for executive summaries
+anthropic==0.28.1

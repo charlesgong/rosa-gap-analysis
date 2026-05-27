@@ -46,6 +46,8 @@ def generate_html_report(data: Dict[str, Any], output_file: str = None) -> str:
         template = jinja_env.get_template('ocp-gate-ack.html.j2')
     elif 'Full Gap Analysis' in report_type:
         template = jinja_env.get_template('full-gap.html.j2')
+    elif 'Aggregate Gap Analysis' in report_type:
+        template = jinja_env.get_template('aggregate-report.html.j2')
     else:
         # Fallback to a generic template (use aws-sts as base)
         template = jinja_env.get_template('aws-sts.html.j2')

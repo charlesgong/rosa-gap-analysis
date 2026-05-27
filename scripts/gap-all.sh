@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/openshift-releases.sh"
 
 # Get project root (one level up from scripts/)
+START_TIME=$(date +%s)
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 BASELINE=""
@@ -288,6 +289,82 @@ if [[ "$VERBOSE" == "true" ]]; then
     VERBOSE_FLAG="--verbose"
 fi
 
+# Helper function for consistent result formatting
+format_result() {
+    local icon="$1"
+    local check_num="$2"
+    local check_name="$3"
+    local status="$4"
+    local details="$5"
+    printf "%-4s CHECK #%d: %-25s - %-10s (%s)\n" "$icon" "$check_num" "$check_name" "$status" "$details"
+}
+
+# Print executive summary to build log
+print_summary() {
+    local report_dir="$1"
+    local end_time=$(date +%s)
+    local duration=$((end_time - START_TIME))
+    local duration_fmt=$(printf "%dm %ds" $((duration / 60)) $((duration % 60)))
+
+    echo ""
+    echo "==============================================================================="
+    echo "GAP ANALYSIS SUMMARY"
+    echo "==============================================================================="
+    echo "Job:       ${JOB_NAME:-local-run}"
+    echo "Run:       ${BUILD_ID:-$(date +%s)}"
+    echo "Baseline:  $BASELINE"
+    echo "Target:    $TARGET"
+    echo "Started:   $(date -u -r "${START_TIME}" '+%Y-%m-%d %H:%M:%S UTC')"
+    echo "Completed: $(date -u -r "${end_time}" '+%Y-%m-%d %H:%M:%S UTC')"
+    echo "Duration:  $duration_fmt"
+    echo ""
+    echo "RESULTS:"
+    
+    # AWS Result (Check #1)
+    local aws_icon="[ℹ]"
+    local aws_status="SKIPPED"
+    if should_run_step "aws"; then
+        if [[ $aws_result -eq 0 ]]; then aws_icon="[✓]"; aws_status="PASS"; else aws_icon="[✗]"; aws_status="FAIL"; fi
+    fi
+    format_result "$aws_icon" 1 "AWS STS Policies" "$aws_status" ""
+
+    # GCP Result (Check #2)
+    local gcp_icon="[ℹ]"
+    local gcp_status="SKIPPED"
+    if should_run_step "gcp"; then
+        if [[ $gcp_result -eq 0 ]]; then gcp_icon="[✓]"; gcp_status="PASS"; else gcp_icon="[✗]"; gcp_status="FAIL"; fi
+    fi
+    format_result "$gcp_icon" 2 "GCP WIF Policies" "$gcp_status" ""
+
+    # OCP Result (Check #3)
+    local ocp_icon="[ℹ]"
+    local ocp_status="SKIPPED"
+    if should_run_step "ocp"; then
+        if [[ $ocp_gate_ack_result -eq 0 ]]; then ocp_icon="[✓]"; ocp_status="PASS"; else ocp_icon="[✗]"; ocp_status="FAIL"; fi
+    fi
+    format_result "$ocp_icon" 3 "OCP Admin Gates" "$ocp_status" ""
+
+    # Feature Gates Result (Check #4)
+    local fg_icon="[ℹ]"
+    local fg_status="SKIPPED"
+    if should_run_step "feature-gates"; then
+        fg_icon="[✓]"
+        fg_status="PASS"
+    fi
+    format_result "$fg_icon" 4 "Feature Gates" "$fg_status" "Informational"
+
+    echo ""
+    local overall="SUCCESS"
+    if [[ "${should_exit_fail:-false}" == "true" ]]; then overall="FAILURE"; fi
+    echo "OVERALL STATUS: $overall"
+    echo ""
+    echo "ARTIFACTS:"
+    echo "- Reports: $report_dir/"
+    echo "- Aggregated: $report_dir/aggregate-summary.html"
+    echo "==============================================================================="
+    echo ""
+}
+
 main() {
     # Create report directory if it doesn't exist
     mkdir -p "$REPORT_DIR"
@@ -325,7 +402,6 @@ main() {
     local ocp_gate_ack_output=""
 
     # Set environment variable to skip individual reports (full report will be generated instead)
-    export GAP_FULL_REPORT=1
 
     # Helper function to check if a step should run
     should_run_step() {
@@ -444,6 +520,16 @@ main() {
         log_warning "Failed to generate combined report (individual reports still available)"
     }
 
+    # Generate aggregated executive report
+    log_info ""
+    log_info "Generating aggregated executive report..."
+    python3 "${SCRIPT_DIR}/gap-aggregate-report.py" \
+        --baseline "$BASELINE" \
+        --target "$TARGET" \
+        --report-dir "$REPORT_DIR" \
+        ${BUILD_LOG:+--build-log "$BUILD_LOG"} 2>&1 || {
+        log_warning "Failed to generate aggregated executive report"
+    }
     # Exit 1 if any check failed (only for steps that ran)
     # Note: feature gates are informational only and always pass (exit 0)
     # If feature_gates_result=1, it means script execution error, which should fail
@@ -461,6 +547,8 @@ main() {
     if should_run_step "feature-gates" && [[ $feature_gates_result -eq 1 ]]; then
         should_exit_fail=true
     fi
+
+    print_summary "$REPORT_DIR"
 
     if [[ "$should_exit_fail" == "true" ]]; then
         log_error ""
