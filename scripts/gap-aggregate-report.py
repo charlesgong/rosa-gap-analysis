@@ -81,7 +81,7 @@ def parse_build_log(log_path):
 
 def get_ai_insights(report_data):
     """Generate AI insights using Anthropic API."""
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
     if not api_key:
         return None
 
@@ -114,7 +114,8 @@ def get_ai_insights(report_data):
             return message.content[0].text
         return str(message.content)
 
-    except Exception:
+    except Exception as e:
+        log_info(f"AI insights skipped due to error: {e}")
         pass
     
     return None
