@@ -289,102 +289,6 @@ if [[ "$VERBOSE" == "true" ]]; then
     VERBOSE_FLAG="--verbose"
 fi
 
-# Helper function for consistent result formatting
-format_result() {
-    local icon="$1"
-    local check_num="$2"
-    local check_name="$3"
-    local status="$4"
-    local details="$5"
-    printf "%-4s CHECK #%d: %-25s - %-10s (%s)\n" "$icon" "$check_num" "$check_name" "$status" "$details"
-}
-
-# Print executive summary to build log
-print_summary() {
-    local report_dir="$1"
-    local end_time=$(date +%s)
-    local duration=$((end_time - START_TIME))
-    local duration_fmt=$(printf "%dm %ds" $((duration / 60)) $((duration % 60)))
-
-    echo ""
-    echo "==============================================================================="
-    echo "GAP ANALYSIS SUMMARY"
-    echo "==============================================================================="
-    echo "Job:       ${JOB_NAME:-local-run}"
-    echo "Run:       ${BUILD_ID:-$(date +%s)}"
-    echo "Baseline:  $BASELINE"
-    echo "Target:    $TARGET"
-    echo "Started:   $(date -u -r "${START_TIME}" '+%Y-%m-%d %H:%M:%S UTC')"
-    echo "Completed: $(date -u -r "${end_time}" '+%Y-%m-%d %H:%M:%S UTC')"
-    echo "Duration:  $duration_fmt"
-    echo ""
-    echo "RESULTS:"
-    
-    # AWS Result (Check #1)
-    # AWS Result (Check #1)
-    local aws_icon="[ℹ]"
-    local aws_status="SKIPPED"
-    local aws_details=""
-    if should_run_step "aws"; then
-        if [[ $aws_result -eq 0 ]]; then aws_icon="[✓]"; aws_status="PASS"; else aws_icon="[✗]"; aws_status="FAIL"; fi
-        # Extract details from latest JSON
-        local aws_json=$(ls -t "${report_dir}"/gap-analysis-aws-sts_*.json 2>/dev/null | head -n 1)
-        if [[ -f "$aws_json" ]]; then
-            aws_details=$(python3 -c "import json; d=json.load(open('$aws_json')); c=d.get('comparison', {}).get('actions', {}); print(f\"{len(c.get('target_only', []))} added, {len(c.get('baseline_only', []))} removed\")")
-        fi
-    fi
-    format_result "$aws_icon" 1 "AWS STS Policies" "$aws_status" "$aws_details"
-
-    # GCP Result (Check #2)
-    local gcp_icon="[ℹ]"
-    local gcp_status="SKIPPED"
-    local gcp_details=""
-    if should_run_step "gcp"; then
-        if [[ $gcp_result -eq 0 ]]; then gcp_icon="[✓]"; gcp_status="PASS"; else gcp_icon="[✗]"; gcp_status="FAIL"; fi
-        local gcp_json=$(ls -t "${report_dir}"/gap-analysis-gcp-wif_*.json 2>/dev/null | head -n 1)
-        if [[ -f "$gcp_json" ]]; then
-            gcp_details=$(python3 -c "import json; d=json.load(open('$gcp_json')); c=d.get('comparison', {}).get('actions', {}); print(f\"{len(c.get('target_only', []))} added, {len(c.get('baseline_only', []))} removed\")")
-        fi
-    fi
-    format_result "$gcp_icon" 2 "GCP WIF Policies" "$gcp_status" "$gcp_details"
-
-    # OCP Result (Check #3)
-    local ocp_icon="[ℹ]"
-    local ocp_status="SKIPPED"
-    local ocp_details=""
-    if should_run_step "ocp"; then
-        if [[ $ocp_gate_ack_result -eq 0 ]]; then ocp_icon="[✓]"; ocp_status="PASS"; else ocp_icon="[✗]"; ocp_status="FAIL"; fi
-        local ocp_json=$(ls -t "${report_dir}"/gap-analysis-ocp-gate-ack_*.json 2>/dev/null | head -n 1)
-        if [[ -f "$ocp_json" ]]; then
-            ocp_details=$(python3 -c "import json; d=json.load(open('$ocp_json')); s=d.get('summary', {}); print(f\"{s.get('unacknowledged', 0)} unacknowledged gates\")")
-        fi
-    fi
-    format_result "$ocp_icon" 3 "OCP Admin Gates" "$ocp_status" "$ocp_details"
-
-    # Feature Gates Result (Check #4)
-    local fg_icon="[ℹ]"
-    local fg_status="SKIPPED"
-    local fg_details=""
-    if should_run_step "feature-gates"; then
-        fg_icon="[✓]"
-        fg_status="PASS"
-        local fg_json=$(ls -t "${report_dir}"/gap-analysis-feature-gates_*.json 2>/dev/null | head -n 1)
-        if [[ -f "$fg_json" ]]; then
-            fg_details=$(python3 -c "import json; d=json.load(open('$fg_json')); c=d.get('comparison', {}); print(f\"{len(c.get('added', [])) + len(c.get('removed', [])) + len(c.get('newly_enabled_by_default', []))} changes detected\")")
-        fi
-    fi
-    format_result "$fg_icon" 4 "Feature Gates" "$fg_status" "$fg_details"
-    echo ""
-    local overall="SUCCESS"
-    if [[ "${should_exit_fail:-false}" == "true" ]]; then overall="FAILURE"; fi
-    echo "OVERALL STATUS: $overall"
-    echo ""
-    echo "ARTIFACTS:"
-    echo "- Reports: $report_dir/"
-    echo "- Aggregated: $report_dir/aggregate-summary.html"
-    echo "==============================================================================="
-    echo ""
-}
 
 main() {
     # Create report directory if it doesn't exist
@@ -569,7 +473,6 @@ main() {
         should_exit_fail=true
     fi
 
-    print_summary "$REPORT_DIR"
 
     if [[ "$should_exit_fail" == "true" ]]; then
         log_error ""

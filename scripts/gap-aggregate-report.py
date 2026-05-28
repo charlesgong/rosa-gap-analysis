@@ -120,34 +120,46 @@ def get_ai_insights(report_data):
     
     return None
 
-def print_ascii_summary(data):
+def print_ascii_summary(data, report_dir):
     """Print a text-based summary to stdout for the build log."""
     print("\n" + "="*80)
     print("GAP ANALYSIS SUMMARY")
     print("="*80)
+    print(f"Job:       {os.environ.get('JOB_NAME', 'local-run')}")
+    print(f"Run:       {os.environ.get('BUILD_ID', 'N/A')}")
     print(f"Baseline:  {data['baseline']}")
     print(f"Target:    {data['target']}")
     print(f"Timestamp: {data['timestamp']}")
+    print(f"Duration:  {data.get('build_metrics', {}).get('duration', 'Unknown')}")
     print("-" * 40)
     print("RESULTS:")
     
-    for label, check in data['checks'].items():
+    check_order = [
+        ('AWS STS Policies', 'aws_sts'),
+        ('GCP WIF Policies', 'gcp_wif'),
+        ('OCP Admin Gates', 'ocp_gate_ack'),
+        ('Feature Gates', 'feature_gates')
+    ]
+
+    for i, (label, key) in enumerate(check_order, 1):
+        check = data['checks'].get(label, {'status': 'SKIPPED', 'summary': ''})
         icon = "[✓]"
         if check['status'] == 'FAIL':
             icon = "[✗]"
-        elif check['status'] == 'WARNING':
+        elif check['status'] in ['WARNING', 'ERROR']:
             icon = "[⚠]"
-        elif check['status'] == 'INFO':
+        elif check['status'] in ['INFO', 'SKIPPED']:
             icon = "[ℹ]"
             
-        print(f"{icon} {label:25} - {check['status']:8} ({check['summary']})")
+        print(f"{icon} CHECK #{i}: {label:25} - {check['status']:8} ({check['summary']})")
     
     print("-" * 40)
-    print(f"OVERALL STATUS: {data['overall_status']}")
+    status_label = "SUCCESS" if data['overall_status'] == 'PASS' else "FAILURE"
+    print(f"OVERALL STATUS: {status_label}")
     print("-" * 40)
     print("ARTIFACTS:")
-    for key, filename in data['reports'].items():
-        print(f"- {key:15}: {filename}")
+    print(f"- Reports: {report_dir}/")
+    print(f"- Aggregated: {os.path.join(report_dir, 'aggregate-summary.html')}")
     print("="*80 + "\n")
 
 def main():
@@ -161,6 +173,7 @@ def main():
     
     reports = find_latest_reports(args.baseline, args.target, args.report_dir)
     
+    # Aggregate data
     agg_data = {
         'type': 'Aggregate Gap Analysis',
         'baseline': args.baseline,
@@ -171,10 +184,12 @@ def main():
         'overall_status': 'PASS'
     }
 
+    # Map reports to links (relative to report-dir)
     for key, path in reports.items():
         if path:
             agg_data['reports'][key] = os.path.basename(path).replace('.json', '.html')
 
+    # Process individual check results
     check_map = {
         'aws_sts': 'AWS STS Policies',
         'gcp_wif': 'GCP WIF Policies',
@@ -183,8 +198,8 @@ def main():
     }
 
     for key, label in check_map.items():
-        status = 'INFO'
-        summary = 'No data available'
+        status = 'SKIPPED'
+        summary = ''
         
         if reports[key]:
             try:
@@ -194,6 +209,7 @@ def main():
                     if status == 'FAIL':
                         agg_data['overall_status'] = 'FAIL'
                     
+                    # Extract a brief summary based on report type
                     if key == 'aws_sts':
                         summary = f"{len(data.get('comparison', {}).get('actions', {}).get('target_only', []))} added, {len(data.get('comparison', {}).get('actions', {}).get('baseline_only', []))} removed"
                     elif key == 'gcp_wif':
@@ -201,22 +217,34 @@ def main():
                     elif key == 'ocp_gate_ack':
                         summary = f"{data.get('summary', {}).get('unacknowledged', 0)} unacknowledged gates"
                     elif key == 'feature_gates':
-                        summary = "Informational report"
+                        # Feature gates always pass as informational
+                        status = 'PASS'
+                        c = data.get('comparison', {})
+                        change_count = len(c.get('added', [])) + len(c.get('removed', [])) + len(c.get('newly_enabled_by_default', []))
+                        summary = f"{change_count} changes detected"
             except Exception as e:
                 log_warning(f"Error reading {key} report: {e}")
         
         agg_data['checks'][label] = {'status': status, 'summary': summary}
 
+    # Parse build log
     agg_data['build_metrics'] = parse_build_log(args.build_log)
+
+    # Get AI Insights
     agg_data['ai_insights'] = get_ai_insights(agg_data)
 
-    # print_ascii_summary(agg_data)
+    # Print ASCII summary to console (SREP-4306)
+    print_ascii_summary(agg_data, args.report_dir)
 
+    # Generate Reports
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
     html_file = os.path.join(args.report_dir, f"gap-analysis-summary_{args.baseline}_to_{args.target}_{timestamp}.html")
     generate_html_report(agg_data, html_file)
+    # Also create a symlink or a fixed name for index.html if in CI
     index_file = os.path.join(args.report_dir, "aggregate-summary.html")
     generate_html_report(agg_data, index_file)
+    
     json_file = os.path.join(args.report_dir, f"gap-analysis-summary_{args.baseline}_to_{args.target}_{timestamp}.json")
     generate_json_report(agg_data, json_file)
     
