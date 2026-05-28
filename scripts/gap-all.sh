@@ -327,7 +327,15 @@ main() {
     local ocp_gate_ack_output=""
 
     # Set environment variable to skip individual reports (full report will be generated instead)
-    if [[ "${GAP_FULL_REPORT:-1}" == "0" ]]; then unset GAP_FULL_REPORT; else export GAP_FULL_REPORT=1; fi
+      # Normalize GAP_FULL_REPORT: 0/false/no/off enables aggregation, else 1/true/yes/on suppresses individual reports
+      local full_report_val=$(echo "${GAP_FULL_REPORT:-1}" | tr "[:upper:]" "[:lower:]")
+      local normalized_full_report=1
+      if [[ "$full_report_val" == "0" || "$full_report_val" == "false" || "$full_report_val" == "no" || "$full_report_val" == "off" ]]; then
+          normalized_full_report=0
+          unset GAP_FULL_REPORT
+      else
+          export GAP_FULL_REPORT=1
+      fi
 
     # Helper function to check if a step should run
     should_run_step() {
@@ -446,7 +454,7 @@ main() {
         log_warning "Failed to generate combined report (individual reports still available)"
     }
 
-    if [[ "${GAP_FULL_REPORT:-0}" == "0" ]]; then
+    if [[ "$normalized_full_report" == "0" ]]; then
         # Generate aggregated executive report
         log_info ""
         log_info "Generating aggregated executive report..."
