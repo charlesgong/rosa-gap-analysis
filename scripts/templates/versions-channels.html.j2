@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ type }} Report</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #0066cc;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #444;
+            margin-top: 30px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #555;
+            margin-top: 20px;
+        }
+        .metadata {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .metadata p {
+            margin: 5px 0;
+        }
+        .summary-card {
+            display: inline-block;
+            margin: 10px;
+            padding: 20px;
+            background-color: #e3f2fd;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 160px;
+            vertical-align: top;
+        }
+        .summary-card .number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #1565c0;
+        }
+        .summary-card .label {
+            font-size: 0.9em;
+            color: #555;
+        }
+        .summary-card.success {
+            background-color: #e8f5e9;
+        }
+        .summary-card.success .number {
+            color: #2e7d32;
+        }
+        .summary-card.warning {
+            background-color: #fff3e0;
+        }
+        .summary-card.warning .number {
+            color: #e65100;
+        }
+        .summary-card.info {
+            background-color: #e3f2fd;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f5f5f5;
+            font-weight: 600;
+        }
+        tr:nth-child(even) {
+            background-color: #fafafa;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        .badge-pass {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        .badge-info {
+            background-color: #e3f2fd;
+            color: #1565c0;
+        }
+        .badge-warn {
+            background-color: #fff3e0;
+            color: #e65100;
+        }
+        .badge-na {
+            background-color: #f5f5f5;
+            color: #999;
+        }
+        details {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #fafafa;
+            border-radius: 5px;
+            border: 1px solid #e0e0e0;
+        }
+        details summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #333;
+        }
+        .path-arrow {
+            color: #666;
+            padding: 0 5px;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+            color: #888;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CHECK #7: {{ type }}</h1>
+
+        <div class="metadata">
+            <p><strong>Baseline:</strong> {{ baseline }} (minor: {{ baseline_minor }})</p>
+            <p><strong>Target:</strong> {{ target }} (minor: {{ target_minor }})</p>
+            <p><strong>Comparison:</strong> {% if is_z_stream %}Z-stream{% else %}Cross-minor ({{ baseline_minor }} → {{ target_minor }}){% endif %}</p>
+            <p><strong>Generated:</strong> {{ timestamp }}</p>
+            <p><strong>Result:</strong> <span class="badge badge-pass">PASS (Informational)</span></p>
+        </div>
+
+        <h2>Summary</h2>
+        <div>
+            <div class="summary-card {% if summary.baseline_in_stable %}success{% else %}warning{% endif %}">
+                <div class="number">{% if summary.baseline_in_stable %}✓{% else %}✗{% endif %}</div>
+                <div class="label">Baseline in Stable</div>
+            </div>
+            <div class="summary-card info">
+                <div class="number">{{ summary.target_highest_channel or 'none' }}</div>
+                <div class="label">Target Highest Channel</div>
+            </div>
+            <div class="summary-card {% if summary.total_upgrade_paths > 0 %}success{% else %}warning{% endif %}">
+                <div class="number">{{ summary.total_upgrade_paths }}</div>
+                <div class="label">Upgrade Paths</div>
+            </div>
+            <div class="summary-card {% if summary.accepted_not_in_channel == 0 %}success{% else %}info{% endif %}">
+                <div class="number">{{ summary.accepted_not_in_channel }}</div>
+                <div class="label">Accepted-Only Versions</div>
+            </div>
+        </div>
+
+        <h2>Channel Availability</h2>
+
+        <h3>Baseline: {{ baseline_minor }}</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Channel</th>
+                    <th>Available</th>
+                    <th>Versions</th>
+                    <th>Latest</th>
+                    <th>Contains {{ baseline }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ch in ['candidate', 'fast', 'stable'] %}
+                {% set info = channel_availability.baseline.channels.get(ch, {}) %}
+                <tr>
+                    <td><strong>{{ ch }}-{{ baseline_minor }}</strong></td>
+                    <td>{% if info.get('available') %}<span class="badge badge-pass">Yes</span>{% else %}<span class="badge badge-na">No</span>{% endif %}</td>
+                    <td style="text-align: center;">{{ info.get('version_count', 0) }}</td>
+                    <td>{{ info.get('latest', '-') }}</td>
+                    <td>{% if ch in channel_availability.baseline_version_channels %}<span class="badge badge-pass">✓</span>{% else %}<span class="badge badge-na">✗</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>Target: {{ target_minor }}</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Channel</th>
+                    <th>Available</th>
+                    <th>Versions</th>
+                    <th>Latest</th>
+                    <th>Contains {{ target }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ch in ['candidate', 'fast', 'stable'] %}
+                {% set info = channel_availability.target.channels.get(ch, {}) %}
+                <tr>
+                    <td><strong>{{ ch }}-{{ target_minor }}</strong></td>
+                    <td>{% if info.get('available') %}<span class="badge badge-pass">Yes</span>{% else %}<span class="badge badge-na">No</span>{% endif %}</td>
+                    <td style="text-align: center;">{{ info.get('version_count', 0) }}</td>
+                    <td>{{ info.get('latest', '-') }}</td>
+                    <td>{% if ch in channel_availability.target_version_channels %}<span class="badge badge-pass">✓</span>{% else %}<span class="badge badge-na">✗</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2>Accepted Streams vs Channels</h2>
+        <p>
+            <strong>{{ accepted_vs_channels.accepted_count }}</strong> version(s) accepted in CI for {{ target_minor }},
+            <strong>{{ accepted_vs_channels.channel_count }}</strong> version(s) in Cincinnati channels.
+        </p>
+
+        {% if accepted_vs_channels.accepted_only %}
+        <details open>
+            <summary>{{ accepted_vs_channels.accepted_only|length }} version(s) accepted in CI but not in any channel</summary>
+            <table>
+                <thead><tr><th>Version</th><th>Status</th></tr></thead>
+                <tbody>
+                    {% for v in accepted_vs_channels.accepted_only %}
+                    <tr>
+                        <td>{{ v }}</td>
+                        <td><span class="badge badge-info">Accepted only</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+        {% else %}
+        <p><span class="badge badge-pass">✓</span> All accepted versions are in at least one channel.</p>
+        {% endif %}
+
+        {% if accepted_vs_channels.channel_only %}
+        <details>
+            <summary>{{ accepted_vs_channels.channel_only|length }} version(s) in channels but not in accepted streams (anomaly)</summary>
+            <table>
+                <thead><tr><th>Version</th><th>Status</th></tr></thead>
+                <tbody>
+                    {% for v in accepted_vs_channels.channel_only %}
+                    <tr>
+                        <td>{{ v }}</td>
+                        <td><span class="badge badge-warn">Channel only</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+        {% endif %}
+
+        <h2>Upgrade Paths</h2>
+        <p>
+            Channel queried: <strong>{{ upgrade_paths.channel_queried }}</strong>
+        </p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Total {{ baseline_minor }} → {{ target_minor }} paths</td>
+                    <td><strong>{{ upgrade_paths.total_paths }}</strong></td>
+                </tr>
+                <tr>
+                    <td>Direct path {{ baseline }} → {{ target }}</td>
+                    <td>{% if upgrade_paths.direct_path_exists %}<span class="badge badge-pass">✓ Exists</span>{% else %}<span class="badge badge-warn">✗ Not found</span>{% endif %}</td>
+                </tr>
+                <tr>
+                    <td>Paths from {{ baseline }}</td>
+                    <td>{{ upgrade_paths.paths_from_baseline }}</td>
+                </tr>
+                <tr>
+                    <td>Paths to {{ target }}</td>
+                    <td>{{ upgrade_paths.paths_to_target }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        {% if upgrade_paths.sample_paths %}
+        <details>
+            <summary>Sample upgrade paths ({{ upgrade_paths.sample_paths|length }} shown)</summary>
+            <table>
+                <thead><tr><th>From</th><th></th><th>To</th></tr></thead>
+                <tbody>
+                    {% for path in upgrade_paths.sample_paths %}
+                    <tr>
+                        <td>{{ path.from }}</td>
+                        <td class="path-arrow">→</td>
+                        <td>{{ path.to }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+        {% endif %}
+
+        <h2>Cross-Source Consistency</h2>
+        <table>
+            <thead>
+                <tr><th>Property</th><th>Baseline ({{ baseline_minor }})</th><th>Target ({{ target_minor }})</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>GA Status</td>
+                    <td>{% if cross_source.baseline_is_ga %}<span class="badge badge-pass">GA</span> ({{ cross_source.baseline_ga_date[:10] if cross_source.baseline_ga_date else '-' }}){% else %}<span class="badge badge-info">Pre-GA</span>{% endif %}</td>
+                    <td>{% if cross_source.target_is_ga %}<span class="badge badge-pass">GA</span> ({{ cross_source.target_ga_date[:10] if cross_source.target_ga_date else '-' }}){% else %}<span class="badge badge-info">Pre-GA</span>{% endif %}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        {% if cross_source.observations %}
+        <h3>Observations</h3>
+        <ul>
+            {% for obs in cross_source.observations %}
+            <li>{{ obs }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        <div class="footer">
+            <p>Generated by gap-versions-channels.py | {{ timestamp }}</p>
+            <p>Data sources: Cincinnati API, Accepted Release Streams, Sippy API</p>
+        </div>
+    </div>
+</body>
+</html>

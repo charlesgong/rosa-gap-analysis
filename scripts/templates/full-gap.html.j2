@@ -344,6 +344,13 @@
                 {% set info_count = info_count + 1 %}
             {% endif %}
 
+            {% if versions_channels %}
+                {% if versions_channels.validation_result == 'PASS' %}
+                    {% set success_count = success_count + 1 %}
+                {% endif %}
+                {% set info_count = info_count + 1 %}
+            {% endif %}
+
             <div class="status-badges">
                 {% if critical_count > 0 %}
                 <div class="status-badge critical">
@@ -478,6 +485,20 @@
                                 {{ fg_added + fg_removed }} total changes
                                 {% else %}-{% endif %}
                             {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    {% if versions_channels %}
+                    <tr>
+                        <td><strong>CHECK #7:</strong> Versions & Channels</td>
+                        <td><span class="added">✅ PASS</span> (Info)</td>
+                        <td style="text-align: center;">{{ versions_channels.summary.accepted_not_in_channel }}</td>
+                        <td style="text-align: center;">-</td>
+                        <td>
+                            {% if versions_channels.summary.total_upgrade_paths > 0 %}
+                            {{ versions_channels.summary.total_upgrade_paths }} upgrade paths
+                            {% else %}-{% endif %}
                         </td>
                     </tr>
                     {% endif %}
@@ -1071,6 +1092,67 @@
                 });
             </script>
             {% endif %}
+            {% endif %}
+            {% endif %}
+
+            {% if versions_channels %}
+            <h2 id="versions-channels">CHECK #7: Versions & Channels</h2>
+
+            <div class="alert success">
+                <strong>✅ Informational Analysis</strong>
+                <ul style="margin: 10px 0 0 0; padding-left: 20px;">
+                    <li><strong>Baseline {{ versions_channels.baseline }}:</strong> channels: {{ versions_channels.summary.baseline_channels|join(', ') or 'none' }}</li>
+                    <li><strong>Target {{ versions_channels.target }}:</strong> highest channel: {{ versions_channels.summary.target_highest_channel }}</li>
+                    <li><strong>Upgrade paths:</strong> {{ versions_channels.summary.total_upgrade_paths }}{% if versions_channels.summary.direct_path_exists %} (direct path exists){% endif %}</li>
+                    {% if versions_channels.summary.accepted_not_in_channel > 0 %}
+                    <li><strong>{{ versions_channels.summary.accepted_not_in_channel }}</strong> version(s) accepted in CI but not in any channel</li>
+                    {% endif %}
+                </ul>
+            </div>
+
+            <h3>Channel Availability ({{ versions_channels.target_minor }})</h3>
+            <table>
+                <thead>
+                    <tr><th>Channel</th><th>Available</th><th>Versions</th><th>Contains Target</th></tr>
+                </thead>
+                <tbody>
+                    {% for ch in ['candidate', 'fast', 'stable'] %}
+                    {% set info = versions_channels.channel_availability.target.channels.get(ch, {}) %}
+                    <tr>
+                        <td><strong>{{ ch }}-{{ versions_channels.target_minor }}</strong></td>
+                        <td>{% if info.get('available') %}<span class="added">Yes</span>{% else %}<span class="removed">No</span>{% endif %}</td>
+                        <td style="text-align: center;">{{ info.get('version_count', 0) }}</td>
+                        <td>{% if ch in versions_channels.summary.target_channels %}<span class="added">✓</span>{% else %}✗{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if versions_channels.upgrade_paths.sample_paths %}
+            <details>
+                <summary>Sample Upgrade Paths ({{ versions_channels.upgrade_paths.sample_paths|length }} of {{ versions_channels.summary.total_upgrade_paths }})</summary>
+                <table>
+                    <thead><tr><th>From</th><th></th><th>To</th></tr></thead>
+                    <tbody>
+                        {% for path in versions_channels.upgrade_paths.sample_paths %}
+                        <tr>
+                            <td>{{ path['from'] }}</td>
+                            <td style="text-align: center;">→</td>
+                            <td>{{ path.to }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </details>
+            {% endif %}
+
+            {% if versions_channels.cross_source.observations %}
+            <h3>Cross-Source Observations</h3>
+            <ul>
+                {% for obs in versions_channels.cross_source.observations %}
+                <li>{{ obs }}</li>
+                {% endfor %}
+            </ul>
             {% endif %}
             {% endif %}
 

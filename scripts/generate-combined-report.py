@@ -23,7 +23,8 @@ def find_latest_reports(baseline, target, report_dir='reports'):
         'aws_sts': None,
         'gcp_wif': None,
         'feature_gates': None,
-        'ocp_gate_ack': None
+        'ocp_gate_ack': None,
+        'versions_channels': None
     }
 
     # Find AWS STS report
@@ -64,6 +65,12 @@ def find_latest_reports(baseline, target, report_dir='reports'):
     # Sort all found files and pick the latest
     if oga_files:
         reports['ocp_gate_ack'] = sorted(oga_files)[-1]  # Latest by filename (timestamp)
+
+    # Find Versions & Channels report (uses minor versions)
+    vc_pattern = os.path.join(report_dir, f"gap-analysis-versions-channels_{baseline_minor}_to_{target_minor}_*.json")
+    vc_files = sorted(glob.glob(vc_pattern))
+    if vc_files:
+        reports['versions_channels'] = vc_files[-1]  # Latest
 
     return reports
 
@@ -117,6 +124,12 @@ def main():
         with open(reports['ocp_gate_ack'], 'r') as f:
             report_data['ocp_gate_ack'] = json.load(f)
         log_info(f"Loaded OCP Gate Acknowledgment report: {reports['ocp_gate_ack']}")
+
+    # Load Versions & Channels data
+    if reports['versions_channels']:
+        with open(reports['versions_channels'], 'r') as f:
+            report_data['versions_channels'] = json.load(f)
+        log_info(f"Loaded Versions & Channels report: {reports['versions_channels']}")
 
     # Generate combined reports
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

@@ -32,7 +32,7 @@ Optional Arguments:
   --target <version>       Target version (must be used with --baseline)
   --version <version>      Single version to analyze (auto-resolves baseline and target)
   --steps <steps>          Comma-separated list of steps to run (default: all)
-                           Available: aws,gcp,ocp,feature-gates
+                           Available: aws,gcp,ocp,versions-channels,feature-gates
                            Example: --steps aws,gcp (runs only AWS and GCP)
   --dry-run                Show resolved versions and exit without running analysis
   --verbose                Enable verbose logging
@@ -245,9 +245,9 @@ if [[ -n "$STEPS" ]]; then
         # Trim whitespace
         step=$(echo "$step" | xargs)
 
-        if [[ "$step" != "aws" ]] && [[ "$step" != "gcp" ]] && [[ "$step" != "ocp" ]] && [[ "$step" != "feature-gates" ]]; then
+        if [[ "$step" != "aws" ]] && [[ "$step" != "gcp" ]] && [[ "$step" != "ocp" ]] && [[ "$step" != "versions-channels" ]] && [[ "$step" != "feature-gates" ]]; then
             log_error "Invalid step: $step"
-            log_error "Valid steps are: aws, gcp, ocp, feature-gates"
+            log_error "Valid steps are: aws, gcp, ocp, versions-channels, feature-gates"
             exit 1
         fi
     done
@@ -255,7 +255,7 @@ if [[ -n "$STEPS" ]]; then
     log_info "Steps to run: ${STEPS_ARRAY[*]}"
 else
     # Default: run all steps
-    STEPS_ARRAY=("aws" "gcp" "ocp" "feature-gates")
+    STEPS_ARRAY=("aws" "gcp" "ocp" "versions-channels" "feature-gates")
 fi
 
 # Dry-run mode: show resolved versions and exit
@@ -275,7 +275,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     if [[ -n "$STEPS" ]]; then
         log_info "Steps to run: ${STEPS_ARRAY[*]}"
     else
-        log_info "Steps to run: all (aws, gcp, ocp, feature-gates)"
+        log_info "Steps to run: all (aws, gcp, ocp, versions-channels, feature-gates)"
     fi
     log_info "========================================="
     log_info "Exiting without running gap analysis"
@@ -306,6 +306,7 @@ main() {
             aws) checks_desc="${checks_desc}AWS STS, " ;;
             gcp) checks_desc="${checks_desc}GCP WIF, " ;;
             ocp) checks_desc="${checks_desc}OCP Gate Acknowledgments, " ;;
+            versions-channels) checks_desc="${checks_desc}Versions & Channels, " ;;
             feature-gates) checks_desc="${checks_desc}Feature Gates, " ;;
         esac
     done
@@ -318,12 +319,14 @@ main() {
 
     local aws_result=0
     local gcp_result=0
-    local feature_gates_result=0
     local ocp_gate_ack_result=0
+    local versions_channels_result=0
+    local feature_gates_result=0
     local aws_output=""
     local gcp_output=""
-    local feature_gates_output=""
     local ocp_gate_ack_output=""
+    local versions_channels_output=""
+    local feature_gates_output=""
 
     # Set environment variable to skip individual reports (full report will be generated instead)
     if [[ "${GAP_FULL_REPORT:-1}" == "0" ]]; then
@@ -388,6 +391,21 @@ main() {
         fi
     fi
 
+    # Run Versions & Channels analysis (informational only - always passes)
+    if should_run_step "versions-channels"; then
+        log_info ""
+        log_info "Running Version & Channel Gap Analysis..."
+        if python3 "${SCRIPT_DIR}/gap-versions-channels.py" \
+            --baseline "$BASELINE" \
+            --target "$TARGET" \
+            --report-dir "$REPORT_DIR" \
+            $VERBOSE_FLAG 2>&1; then
+            versions_channels_result=0
+        else
+            versions_channels_result=1
+        fi
+    fi
+
     # Run Feature Gates analysis (informational only - always passes)
     # IMPORTANT: Feature Gates should always be executed last, even if new checks are added in the future
     if should_run_step "feature-gates"; then
@@ -434,6 +452,9 @@ main() {
         if should_run_step "ocp" && [[ $ocp_gate_ack_result -eq 1 ]]; then
             log_info "OCP Gate Acknowledgments: Target version validation failed (FAIL)"
         fi
+        if should_run_step "versions-channels"; then
+            log_info "Versions & Channels: Informational only (does not affect pass/fail)"
+        fi
         if should_run_step "feature-gates"; then
             log_info "Feature Gates: Informational only (does not affect pass/fail)"
         fi
@@ -471,6 +492,9 @@ main() {
         should_exit_fail=true
     fi
     if should_run_step "ocp" && [[ $ocp_gate_ack_result -eq 1 ]]; then
+        should_exit_fail=true
+    fi
+    if should_run_step "versions-channels" && [[ $versions_channels_result -eq 1 ]]; then
         should_exit_fail=true
     fi
     if should_run_step "feature-gates" && [[ $feature_gates_result -eq 1 ]]; then

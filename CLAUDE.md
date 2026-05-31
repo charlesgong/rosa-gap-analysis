@@ -42,20 +42,21 @@ Claude follows an impact-based approach in this repository:
 ## Architecture
 
 **3-Layer Design:**
-1. Individual analyzers (`scripts/gap-*.py`) - AWS STS, GCP WIF, Feature Gates, OCP Admin Gates
+1. Individual analyzers (`scripts/gap-*.py`) - AWS STS, GCP WIF, Feature Gates, OCP Admin Gates, Versions & Channels
 2. Orchestrator (`scripts/gap-all.sh`) - Runs all analyzers, generates combined reports
 3. Shared libraries (`scripts/lib/`, `ci/lib/`) - Version resolution, validation, reporting, CI utilities
 
 **Data Sources:**
 - `oc adm release extract --credentials-requests` → extracts CredentialsRequest manifests from OCP releases
 - Sippy API → feature gate data and version resolution
+- Cincinnati API → version channel availability and upgrade paths
 - managed-cluster-config GitHub repo → validates policy files and acknowledgments
 
 **Key Patterns:**
 - **Exit codes**: Exit 0 on successful execution even when differences found; exit 1 only on execution errors
 - **Version resolution**: CLI flags > env vars > auto-detect (Sippy API)
 - **Reports**: All scripts generate HTML/JSON simultaneously using Jinja2 templates
-- **Validation**: 6 globally numbered checks; checks 1-5 can FAIL, check 6 (feature gates) is informational only
+- **Validation**: 7 globally numbered checks; checks 1-5 can FAIL, checks 6 (feature gates) and 7 (versions & channels) are informational only
 
 ## Essential Commands
 
@@ -109,6 +110,7 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 | **4** | gap-gcp-wif.py | GCP acknowledgment files in `deploy/osd-cluster-acks/wif/{version}/` | Yes |
 | **5** | gap-ocp-gate-ack.py | OCP admin gate acknowledgments in `deploy/osd-cluster-acks/ocp/{version}/` (conditional: if gates exist, both config.yaml + acknowledgment file required; if no gates, both files must be absent OR both files present with warning). **Acknowledgment file**: admin-ack.yaml OR admin-gates.yaml (either acceptable). **Check order**: acknowledgment file first, then config.yaml. If only one file present when no gates exist, validation fails. **Z-stream behavior**: For z-stream upgrades (e.g., 4.19.30 → 4.19.31), validates gates from 4.19 against acknowledgments in 4.20 (next minor) to detect if a z-stream adds a new gate. | Yes |
 | **6** | gap-feature-gates.py | Feature gate changes (informational). **Z-stream behavior**: When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences. | No |
+| **7** | gap-versions-channels.py | Version availability across Cincinnati channels (candidate/fast/stable), upgrade path existence, accepted-vs-channel comparison, cross-source consistency (informational). **Z-stream behavior**: Shows current channel status for the minor version. | No |
 
 **Expected baseline**: For target X.Y, baseline is X.(Y-1). Example: 4.22 expects 4.21 baseline.
 
