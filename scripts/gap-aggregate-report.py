@@ -65,15 +65,15 @@ def parse_build_log(log_path):
 
     try:
         with open(log_path, 'r') as f:
-            content = f.read()
-            # Basic error/warning counting
-            metrics['errors'] = len(re.findall(r'ERROR|\[ERROR\]|❌|FAILED', content, re.IGNORECASE))
-            metrics['warnings'] = len(re.findall(r'WARNING|\[WARNING\]|⚠️', content, re.IGNORECASE))
-            
-            # Try to find duration
-            duration_match = re.search(r'Finished in ([\d\w\s]+)', content)
-            if duration_match:
-                metrics['duration'] = duration_match.group(1)
+            for line in f:
+                # Precise error/warning counting using word boundaries to prevent false positives
+                metrics['errors'] += len(re.findall(r'\b(ERROR|FAILED)\b|❌', line, re.IGNORECASE))
+                metrics['warnings'] += len(re.findall(r'\bWARNING\b|⚠️', line, re.IGNORECASE))
+                
+                # Try to find duration
+                duration_match = re.search(r'Finished in ([\d\w\s]+)', line)
+                if duration_match:
+                    metrics['duration'] = duration_match.group(1)
     except Exception as e:
         log_warning(f"Failed to parse build log: {e}")
 

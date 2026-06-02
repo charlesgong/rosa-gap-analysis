@@ -9,7 +9,6 @@ source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/openshift-releases.sh"
 
 # Get project root (one level up from scripts/)
-START_TIME=$(date +%s)
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 BASELINE=""
