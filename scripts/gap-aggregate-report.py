@@ -7,6 +7,8 @@ import json
 import os
 import re
 import sys
+import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 
@@ -57,66 +59,164 @@ def find_latest_reports(baseline, target, report_dir='reports'):
 
     return reports
 
-def parse_build_log(log_path):
+def parse_build_log(log_path, report_dir=None):
     """Extract metrics and errors from build log."""
-    metrics = {'errors': 0, 'warnings': 0, 'duration': 'Unknown'}
-    if not log_path or not os.path.exists(log_path):
+    metrics = {
+        'errors': 0,
+        'warnings': 0,
+        'duration': 'Unknown',
+        'build_log_url': None,
+        'fetch_error': None
+    }
+    if not log_path:
         return metrics
 
     try:
-        with open(log_path, 'r') as f:
-            for line in f:
-                # Precise error/warning counting using word boundaries to prevent false positives
-                metrics['errors'] += len(re.findall(r'\b(ERROR|FAILED)\b|❌', line, re.IGNORECASE))
-                metrics['warnings'] += len(re.findall(r'\bWARNING\b|⚠️', line, re.IGNORECASE))
-                
-                # Try to find duration
-                duration_match = re.search(r'Finished in ([\d\w\s]+)', line)
-                if duration_match:
-                    metrics['duration'] = duration_match.group(1)
+        # Determine if remote URL or local path
+        if log_path.startswith(('http://', 'https://')):
+            log_info(f"Fetching remote build log from: {log_path}...")
+            req = urllib.request.Request(
+                log_path, 
+                headers={'User-Agent': 'ROSA-Gap-Analysis-Automation/1.0'}
+            )
+            # Fetch stream and decode line-by-line
+            with urllib.request.urlopen(req, timeout=15) as response:
+                for line_bytes in response:
+                    line = line_bytes.decode('utf-8', errors='ignore')
+                    metrics['errors'] += len(re.findall(r'\b(ERROR|FAILED)\b|❌', line, re.IGNORECASE))
+                    metrics['warnings'] += len(re.findall(r'\bWARNING\b|⚠️', line, re.IGNORECASE))
+                    
+                    # Try to find duration
+                    duration_match = re.search(r'Finished in ([\d\w\s]+)', line)
+                    if duration_match:
+                        metrics['duration'] = duration_match.group(1)
+            
+            metrics['build_log_url'] = log_path
+        else:
+            # Check local file existence and readability
+            if not os.path.exists(log_path):
+                raise FileNotFoundError(f"Local build log file not found at: {log_path}")
+            if not os.access(log_path, os.R_OK):
+                raise PermissionError(f"Permission denied to read local build log at: {log_path}")
+
+            log_info(f"Reading local build log from: {log_path}...")
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    metrics['errors'] += len(re.findall(r'\b(ERROR|FAILED)\b|❌', line, re.IGNORECASE))
+                    metrics['warnings'] += len(re.findall(r'\bWARNING\b|⚠️', line, re.IGNORECASE))
+                    
+                    # Try to find duration
+                    duration_match = re.search(r'Finished in ([\d\w\s]+)', line)
+                    if duration_match:
+                        metrics['duration'] = duration_match.group(1)
+
+            # Copy local build log to report directory for portability
+            if report_dir:
+                os.makedirs(report_dir, exist_ok=True)
+                dest_path = os.path.join(report_dir, 'build-log.txt')
+                import shutil
+                log_info(f"Copying build log to report directory: {dest_path}")
+                shutil.copy2(log_path, dest_path)
+                metrics['build_log_url'] = 'build-log.txt'
+            else:
+                metrics['build_log_url'] = log_path
+
+    except urllib.error.HTTPError as e:
+        error_msg = f"HTTP Error {e.code}: {e.reason}"
+        log_error(f"Failed to fetch remote build log: {error_msg}")
+        metrics['fetch_error'] = error_msg
+    except urllib.error.URLError as e:
+        error_msg = f"Network Connection Error: {e.reason}"
+        log_error(f"Failed to fetch remote build log: {error_msg}")
+        metrics['fetch_error'] = error_msg
+    except PermissionError as e:
+        error_msg = f"Permission Denied: {e}"
+        log_error(error_msg)
+        metrics['fetch_error'] = error_msg
+    except FileNotFoundError as e:
+        error_msg = f"File Not Found: {e}"
+        log_error(error_msg)
+        metrics['fetch_error'] = error_msg
     except Exception as e:
-        log_warning(f"Failed to parse build log: {e}")
+        error_msg = f"Unexpected Error: {e}"
+        log_error(f"Error parsing build log: {error_msg}")
+        metrics['fetch_error'] = error_msg
 
     return metrics
 
-def get_ai_insights(report_data):
-    """Generate AI insights using Anthropic API."""
-    api_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
-    if not api_key:
-        return None
+def get_ai_insights(report_data, model='claude-3-5-sonnet-20240620'):
+    """Generate AI insights using Anthropic or Gemini API."""
+    summary = {
+        'baseline': report_data['baseline'],
+        'target': report_data['target'],
+        'checks': {k: v['status'] for k, v in report_data['checks'].items()}
+    }
+    
+    prompt = f"""You are a senior OpenShift SRE analyzing a Gap Analysis report between versions {summary['baseline']} and {summary['target']}.
+    Results of checks: {json.dumps(summary['checks'], indent=2)}
+    
+    Provide a concise executive summary (max 3 paragraphs). 
+    Identify the most critical risks (if any) and provide 2-3 actionable recommendations.
+    Format the output in HTML (use <h3> for headers, <p> for paragraphs, <ul>/<li> for lists).
+    Do not include any conversational filler."""
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        
-        summary = {
-            'baseline': report_data['baseline'],
-            'target': report_data['target'],
-            'checks': {k: v['status'] for k, v in report_data['checks'].items()}
-        }
-        
-        prompt = f"""You are a senior OpenShift SRE analyzing a Gap Analysis report between versions {summary['baseline']} and {summary['target']}.
-        Results of checks: {json.dumps(summary['checks'], indent=2)}
-        
-        Provide a concise executive summary (max 3 paragraphs). 
-        Identify the most critical risks (if any) and provide 2-3 actionable recommendations.
-        Format the output in HTML (use <h3> for headers, <p> for paragraphs, <ul>/<li> for lists).
-        Do not include any conversational filler."""
+    if model.startswith('claude-'):
+        api_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
+        if not api_key:
+            return None
 
-        log_info("Requesting AI insights from Anthropic...")
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        if hasattr(message.content[0], 'text'):
-            return message.content[0].text
-        return str(message.content)
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            log_info(f"Requesting AI insights from Anthropic using model: {model}...")
+            message = client.messages.create(
+                model=model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            if hasattr(message.content[0], 'text'):
+                return message.content[0].text
+            return str(message.content)
 
-    except Exception as e:
-        log_info(f"AI insights skipped due to error: {e}")
-        pass
+        except Exception as e:
+            log_info(f"AI insights skipped due to Anthropic error: {e}")
+            pass
+
+    elif model.startswith('gemini-'):
+        api_key = os.environ.get('GEMINI_API_KEY', '').strip()
+        if not api_key:
+            api_key = os.environ.get('GOOGLE_API_KEY', '').strip()
+        if not api_key:
+            return None
+
+        try:
+            import urllib.request
+            import urllib.error
+            
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            headers = {'Content-Type': 'application/json'}
+            data = json.dumps({
+                "contents": [{
+                    "parts": [{"text": prompt}]
+                }]
+            }).encode('utf-8')
+            
+            log_info(f"Requesting AI insights from Gemini using model: {model}...")
+            req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+            with urllib.request.urlopen(req) as response:
+                res_body = json.loads(response.read().decode('utf-8'))
+                
+            candidates = res_body.get('candidates', [])
+            if candidates:
+                parts = candidates[0].get('content', {}).get('parts', [])
+                if parts:
+                    return parts[0].get('text', '')
+            return str(res_body)
+
+        except Exception as e:
+            log_info(f"AI insights skipped due to Gemini error: {e}")
+            pass
     
     return None
 
@@ -168,8 +268,23 @@ def main():
     parser.add_argument('--target', required=True, help='Target version')
     parser.add_argument('--report-dir', default='reports', help='Directory containing JSON reports')
     parser.add_argument('--build-log', help='Path to build-log.txt')
+    parser.add_argument('--model', default=os.environ.get('GAP_MODEL', 'claude-3-5-sonnet'), help='AI model for SRE insights')
     
     args = parser.parse_args()
+    
+    MODEL_MAPPING = {
+        'claude-3-5-sonnet': 'claude-3-5-sonnet-20240620',
+        'claude-3-opus': 'claude-3-opus-20240229',
+        'claude-3-haiku': 'claude-3-haiku-20240307',
+        'gemini-1.5-pro': 'gemini-1.5-pro',
+        'gemini-1.5-flash': 'gemini-1.5-flash',
+    }
+
+    if args.model not in MODEL_MAPPING:
+        log_error(f"Model '{args.model}' is not supported. Choose from: {', '.join(sorted(MODEL_MAPPING.keys()))}")
+        sys.exit(1)
+        
+    resolved_model = MODEL_MAPPING[args.model]
     
     reports = find_latest_reports(args.baseline, args.target, args.report_dir)
     
@@ -228,10 +343,10 @@ def main():
         agg_data['checks'][label] = {'status': status, 'summary': summary}
 
     # Parse build log
-    agg_data['build_metrics'] = parse_build_log(args.build_log)
+    agg_data['build_metrics'] = parse_build_log(args.build_log, args.report_dir)
 
     # Get AI Insights
-    agg_data['ai_insights'] = get_ai_insights(agg_data)
+    agg_data['ai_insights'] = get_ai_insights(agg_data, resolved_model)
 
     # Print ASCII summary to console (SREP-4306)
     print_ascii_summary(agg_data, args.report_dir)

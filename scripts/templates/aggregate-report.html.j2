@@ -73,17 +73,34 @@
         {% if build_metrics %}
         <div class="build-metrics">
             <h2>Build Performance & Logs</h2>
+            {% if build_metrics.fetch_error %}
+            <div style="background-color: #fde8e8; border: 1px solid #f8b4b4; color: #9b1c1c; padding: 12px; border-radius: 6px; margin-bottom: 20px; font-size: 0.9em; font-weight: 500;">
+                ⚠️ <strong>Error fetching/reading build log:</strong> {{ build_metrics.fetch_error }}
+            </div>
+            {% endif %}
             <div class="metric-row">
                 <span class="metric-label">Total Duration</span>
                 <span class="metric-value">{{ build_metrics.duration }}</span>
             </div>
             <div class="metric-row">
                 <span class="metric-label">Log Errors Count</span>
-                <span class="metric-value" style="color: {% if build_metrics.errors > 0 %}#e74c3c{% else %}#2ecc71{% endif %}">{{ build_metrics.errors }}</span>
+                <span class="metric-value" style="color: {% if build_metrics.errors > 0 %}#e74c3c{% else %}#2ecc71{% endif %}">
+                    {% if build_metrics.errors > 0 and build_metrics.build_log_url %}
+                    <a href="{{ build_metrics.build_log_url }}" target="_blank" style="color: inherit; text-decoration: underline;">{{ build_metrics.errors }}</a>
+                    {% else %}
+                    {{ build_metrics.errors }}
+                    {% endif %}
+                </span>
             </div>
             <div class="metric-row">
                 <span class="metric-label">Log Warnings Count</span>
-                <span class="metric-value" style="color: #f39c12;">{{ build_metrics.warnings }}</span>
+                <span class="metric-value" style="color: #f39c12;">
+                    {% if build_metrics.warnings > 0 and build_metrics.build_log_url %}
+                    <a href="{{ build_metrics.build_log_url }}" target="_blank" style="color: inherit; text-decoration: underline;">{{ build_metrics.warnings }}</a>
+                    {% else %}
+                    {{ build_metrics.warnings }}
+                    {% endif %}
+                </span>
             </div>
         </div>
         {% endif %}
