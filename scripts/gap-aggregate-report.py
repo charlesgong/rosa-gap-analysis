@@ -144,82 +144,6 @@ def parse_build_log(log_path, report_dir=None):
 
     return metrics
 
-def get_ai_insights(report_data, model='claude-3-5-sonnet-20240620'):
-    """Generate AI insights using Anthropic or Gemini API."""
-    summary = {
-        'baseline': report_data['baseline'],
-        'target': report_data['target'],
-        'checks': {k: v['status'] for k, v in report_data['checks'].items()}
-    }
-    
-    prompt = f"""You are a senior OpenShift SRE analyzing a Gap Analysis report between versions {summary['baseline']} and {summary['target']}.
-    Results of checks: {json.dumps(summary['checks'], indent=2)}
-    
-    Provide a concise executive summary (max 3 paragraphs). 
-    Identify the most critical risks (if any) and provide 2-3 actionable recommendations.
-    Format the output in HTML (use <h3> for headers, <p> for paragraphs, <ul>/<li> for lists).
-    Do not include any conversational filler."""
-
-    if model.startswith('claude-'):
-        api_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
-        if not api_key:
-            return None
-
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=api_key)
-            log_info(f"Requesting AI insights from Anthropic using model: {model}...")
-            message = client.messages.create(
-                model=model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            if hasattr(message.content[0], 'text'):
-                return message.content[0].text
-            return str(message.content)
-
-        except Exception as e:
-            log_info(f"AI insights skipped due to Anthropic error: {e}")
-            pass
-
-    elif model.startswith('gemini-'):
-        api_key = os.environ.get('GEMINI_API_KEY', '').strip()
-        if not api_key:
-            api_key = os.environ.get('GOOGLE_API_KEY', '').strip()
-        if not api_key:
-            return None
-
-        try:
-            import urllib.request
-            import urllib.error
-            
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            headers = {'Content-Type': 'application/json'}
-            data = json.dumps({
-                "contents": [{
-                    "parts": [{"text": prompt}]
-                }]
-            }).encode('utf-8')
-            
-            log_info(f"Requesting AI insights from Gemini using model: {model}...")
-            req = urllib.request.Request(url, data=data, headers=headers, method='POST')
-            with urllib.request.urlopen(req) as response:
-                res_body = json.loads(response.read().decode('utf-8'))
-                
-            candidates = res_body.get('candidates', [])
-            if candidates:
-                parts = candidates[0].get('content', {}).get('parts', [])
-                if parts:
-                    return parts[0].get('text', '')
-            return str(res_body)
-
-        except Exception as e:
-            log_info(f"AI insights skipped due to Gemini error: {e}")
-            pass
-    
-    return None
-
 def print_ascii_summary(data, report_dir):
     """Print a text-based summary to stdout for the build log."""
     print("\n" + "="*80)
@@ -268,23 +192,7 @@ def main():
     parser.add_argument('--target', required=True, help='Target version')
     parser.add_argument('--report-dir', default='reports', help='Directory containing JSON reports')
     parser.add_argument('--build-log', help='Path to build-log.txt')
-    parser.add_argument('--model', default=os.environ.get('GAP_MODEL', 'claude-3-5-sonnet'), help='AI model for SRE insights')
-    
     args = parser.parse_args()
-    
-    MODEL_MAPPING = {
-        'claude-3-5-sonnet': 'claude-3-5-sonnet-20240620',
-        'claude-3-opus': 'claude-3-opus-20240229',
-        'claude-3-haiku': 'claude-3-haiku-20240307',
-        'gemini-1.5-pro': 'gemini-1.5-pro',
-        'gemini-1.5-flash': 'gemini-1.5-flash',
-    }
-
-    if args.model not in MODEL_MAPPING:
-        log_error(f"Model '{args.model}' is not supported. Choose from: {', '.join(sorted(MODEL_MAPPING.keys()))}")
-        sys.exit(1)
-        
-    resolved_model = MODEL_MAPPING[args.model]
     
     reports = find_latest_reports(args.baseline, args.target, args.report_dir)
     
@@ -345,8 +253,7 @@ def main():
     # Parse build log
     agg_data['build_metrics'] = parse_build_log(args.build_log, args.report_dir)
 
-    # Get AI Insights
-    agg_data['ai_insights'] = get_ai_insights(agg_data, resolved_model)
+
 
     # Print ASCII summary to console (SREP-4306)
     print_ascii_summary(agg_data, args.report_dir)

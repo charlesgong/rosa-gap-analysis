@@ -20,10 +20,6 @@
         .status-card h3 { margin-top: 0; font-size: 1em; color: #7f8c8d; }
         .status-card .value { font-size: 1.5em; font-weight: bold; }
 
-        .ai-insights { background: #fff8e1; border: 1px solid #ffe082; padding: 25px; border-radius: 8px; margin-bottom: 30px; position: relative; }
-        .ai-insights::before { content: "AI INSIGHTS"; position: absolute; top: -10px; left: 20px; background: #ffc107; color: #000; padding: 2px 10px; font-size: 0.7em; font-weight: bold; border-radius: 3px; }
-        .ai-insights h2 { margin-top: 0; color: #856404; }
-
         .build-metrics { margin-bottom: 30px; }
         .metric-row { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding: 10px 0; }
         .metric-label { font-weight: 500; }
@@ -62,13 +58,6 @@
             </div>
             {% endfor %}
         </div>
-
-        {% if ai_insights %}
-        <div class="ai-insights">
-            <h2>Executive Analysis</h2>
-            {{ ai_insights | safe }}
-        </div>
-        {% endif %}
 
         {% if build_metrics %}
         <div class="build-metrics">
