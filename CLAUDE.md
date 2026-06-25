@@ -49,7 +49,7 @@ Claude follows an impact-based approach in this repository:
 **Data Sources:**
 - `oc adm release extract --credentials-requests` → extracts CredentialsRequest manifests from OCP releases
 - Sippy API → feature gate data and version resolution
-- managed-cluster-config GitHub repo → validates policy files and acknowledgments
+- `managed-cluster-config` GitHub repo → validates policy files and acknowledgments
 
 **Key Patterns:**
 - **Exit codes**: Exit 0 on successful execution even when differences found; exit 1 only on execution errors
@@ -109,6 +109,8 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 | **4** | gap-gcp-wif.py | GCP acknowledgment files in `deploy/osd-cluster-acks/wif/{version}/` | Yes |
 | **5** | gap-ocp-gate-ack.py | OCP admin gate acknowledgments in `deploy/osd-cluster-acks/ocp/{version}/` (conditional: if gates exist, both config.yaml + acknowledgment file required; if no gates, both files must be absent OR both files present with warning). **Acknowledgment file**: admin-ack.yaml OR admin-gates.yaml (either acceptable). **Check order**: acknowledgment file first, then config.yaml. If only one file present when no gates exist, validation fails. **Z-stream behavior**: For z-stream upgrades (e.g., 4.19.30 → 4.19.31), validates gates from 4.19 against acknowledgments in 4.20 (next minor) to detect if a z-stream adds a new gate. | Yes |
 | **6** | gap-feature-gates.py | Feature gate changes (informational). **Z-stream behavior**: When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences. | No |
+| **8** | gap-ocm-version-gate.py | OCM version gate existence, configurations, and metadata for target OCP versions (compared against baseline version gates). Exits 0 on validation findings; fallback gracefully if OCM offline token / CLI is absent. | No |
+
 
 **Expected baseline**: For target X.Y, baseline is X.(Y-1). Example: 4.22 expects 4.21 baseline.
 

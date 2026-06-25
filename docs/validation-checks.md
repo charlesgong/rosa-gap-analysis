@@ -14,6 +14,8 @@ All scripts use a consistent global check numbering system:
 | **4** | GCP WIF Admin Ack | Validates admin acknowledgment files in [managed-cluster-config](https://github.com/openshift/managed-cluster-config) `deploy/osd-cluster-acks/wif/{version}/` | Exit code 1 on FAIL |
 | **5** | OCP Admin Gates | Validates admin gates from cluster-version-operator are acknowledged in [managed-cluster-config](https://github.com/openshift/managed-cluster-config) `deploy/osd-cluster-acks/ocp/{version}/` (conditional: if gates exist, both files required; if no gates, both files must be absent) | Exit code 1 on FAIL |
 | **6** | Feature Gates | Analyzes feature gate changes from Sippy API. **Z-stream behavior:** When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences, as z-stream updates should not change feature gates (informational only) | Always PASS (exit code 0) |
+| **8** | OCM Version Gates | Validates OCM version gate existence, configurations, and metadata for target OCP versions compared to baseline version gates | Always PASS (exit code 0) |
+
 
 ## Check Execution by Script
 
@@ -28,6 +30,9 @@ All scripts use a consistent global check numbering system:
 ### gap-ocp-gate-ack.py
 - **Check 5:** OCP Admin Gate Acknowledgments
 
+### gap-ocm-version-gate.py
+- **Check 8:** OCM Version Gates Validation (Informational)
+
 ### gap-feature-gates.py
 - **Check 6:** Feature Gates Analysis (Informational)
 
@@ -36,7 +41,8 @@ Runs all checks in order:
 1. AWS STS (Checks 1-2)
 2. GCP WIF (Checks 3-4)
 3. OCP Admin Gates (Check 5)
-4. Feature Gates (Check 6) - Always executed last
+4. OCM Version Gates (Check 8)
+5. Feature Gates (Check 6) - Always executed last
 
 ## Output Format
 
@@ -243,6 +249,22 @@ When no admin gates exist in cluster-version-operator, acknowledgment files use 
 - Analysis completes successfully
 - Changes are tracked but do not affect exit code
 
+### Check 8: OCM Version Gates
+
+**What it analyzes:**
+- Checks if target minor version has corresponding version gate in OCM (via clusters-mgmt API `/api/clusters_mgmt/v1/version_gates`)
+- Verifies enabled/disabled configurations and gate metadata (labels, descriptions, documentation links)
+- Compares gate configurations between baseline (Y-1) and target (Y) to identify new or removed gates
+
+**Data source:**
+- OCM API: `/api/clusters_mgmt/v1/version_gates` (via OCM CLI `ocm get`)
+
+**Pass criteria:**
+- Always PASS (informational/warning only)
+- Script exits 0 even if gates are missing or inconsistent
+- Script exits 1 on fatal execution errors (e.g. invalid arguments, missing dependencies, etc.)
+- Fallback gracefully to simulated/dry-run gates configuration if OCM credentials or CLI are absent
+
 ## Version Resolution
 
 ### OpenShift 5.x Major Version Mapping
@@ -322,6 +344,10 @@ python3 ./scripts/gap-aws-sts.py --baseline 4.23 --target 5.0
 ### Feature Gates Script (gap-feature-gates.py)
 - **Exit 0 (PASS):** Always (informational only) OR dry-run mode
 - **Exit 1 (FAIL):** Only on execution error (network, invalid version, etc.)
+
+### OCM Version Gate Script (gap-ocm-version-gate.py)
+- **Exit 0 (PASS):** Always (informational only) OR dry-run mode
+- **Exit 1 (FAIL):** Only on execution error (missing Python dependency, syntax error, etc.)
 
 ### Combined Script (gap-all.sh)
 - **Exit 0 (PASS):** All checks 1-5 passed (check 6 is informational) OR dry-run mode

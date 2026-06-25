@@ -28,6 +28,7 @@ The framework performs **6 validation checks** across all scripts:
 | **4** | GCP WIF Admin Ack | Validates GCP acknowledgment files | Exit 1 on FAIL |
 | **5** | OCP Admin Gates | Validates admin gate acknowledgments | Exit 1 on FAIL |
 | **6** | Feature Gates | Tracks feature gate changes (informational) | Always PASS |
+| **8** | OCM Version Gates | Validates OCM version gate configurations | Always PASS |
 
 See [Validation Checks](docs/validation-checks.md) for detailed information about each check.
 
@@ -182,6 +183,7 @@ gap-analysis/
 │   ├── gap-gcp-wif.py       # GCP WIF policy analysis
 │   ├── gap-feature-gates.py # Feature gate analysis
 │   ├── gap-ocp-gate-ack.py  # OCP admin gate acknowledgment analysis
+│   ├── gap-ocm-version-gate.py # OCM version gate analysis
 │   ├── gap-all.sh           # Run all analyses
 │   └── lib/                 # Shared libraries
 │

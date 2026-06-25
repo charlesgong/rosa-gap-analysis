@@ -344,6 +344,16 @@
                 {% set info_count = info_count + 1 %}
             {% endif %}
 
+            {% if ocm_version_gate %}
+                {% if ocm_version_gate.validation_result == 'FAIL' %}
+                    {% set critical_count = critical_count + 1 %}
+                {% elif ocm_version_gate.validation_result == 'PASS' %}
+                    {% set success_count = success_count + 1 %}
+                {% endif %}
+                {% set info_count = info_count + 1 %}
+            {% endif %}
+
+
             <div class="status-badges">
                 {% if critical_count > 0 %}
                 <div class="status-badge critical">
@@ -370,6 +380,64 @@
                 </div>
                 {% endif %}
             </div>
+
+            {% if build_metrics %}
+            <h2 id="build-metrics">Build Execution & Log Details</h2>
+            <div class="metadata" style="background-color: {% if build_metrics.status == 'FAILED' %}#fdf2f2{% else %}#f3faf5{% endif %}; border-left: 5px solid {% if build_metrics.status == 'FAILED' %}#e74c3c{% else %}#2ecc71{% endif %}; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p style="margin: 5px 0;"><strong>Overall Run Status:</strong> <span style="font-size: 1em; font-weight: bold; padding: 2px 8px; border-radius: 4px; border: 1px solid; {% if build_metrics.status == 'FAILED' %}background-color: #fee; border-color: #dc3545; color: #721c24;{% else %}background-color: #d4edda; border-color: #28a745; color: #155724;{% endif %}">{{ build_metrics.status }}</span></p>
+                <p style="margin: 5px 0;"><strong>Total Duration:</strong> <code>{{ build_metrics.duration }}</code></p>
+                <p style="margin: 5px 0;"><strong>Log Errors Count:</strong> <strong style="color: {% if build_metrics.errors_count > 0 %}#dc3545{% else %}#28a745{% endif %}; font-size: 1.1em;">{{ build_metrics.errors_count }}</strong></p>
+                <p style="margin: 5px 0;"><strong>Log Warnings Count:</strong> <strong style="color: #ffc107; font-size: 1.1em;">{{ build_metrics.warnings_count }}</strong></p>
+            </div>
+
+            {% if build_metrics.failures %}
+            <h3>Critical Failures & Exceptions ({{ build_metrics.failures|length }})</h3>
+            <table style="border: 1px solid #ddd; margin-bottom: 25px;">
+                <thead>
+                    <tr style="background-color: #dc3545; color: white;">
+                        <th style="width: 20%; padding: 10px;">Failure Type</th>
+                        <th style="width: 25%; padding: 10px;">Component</th>
+                        <th style="width: 55%; padding: 10px;">Detail / Traceback</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for failure in build_metrics.failures %}
+                    <tr>
+                        <td style="color: #dc3545; font-weight: bold; padding: 10px;">{{ failure.type }}</td>
+                        <td style="font-family: monospace; font-weight: bold; padding: 10px;">{{ failure.component }}</td>
+                        <td style="padding: 10px;">
+                            {% if '\n' in failure.detail %}
+                            <pre style="background: #f8f9fa; border: 1px solid #eee; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 0.85em; margin: 0; white-space: pre-wrap; word-break: break-all;">{{ failure.detail }}</pre>
+                            {% else %}
+                            {{ failure.detail }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            {% if build_metrics.retries %}
+            <h3>Component Retry Events ({{ build_metrics.retries|length }})</h3>
+            <table style="border: 1px solid #ddd; margin-bottom: 25px;">
+                <thead>
+                    <tr style="background-color: #ffc107; color: #212529;">
+                        <th style="width: 30%; padding: 10px;">Component</th>
+                        <th style="width: 70%; padding: 10px;">Retry Detail</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for retry in build_metrics.retries %}
+                    <tr>
+                        <td style="font-family: monospace; font-weight: bold; padding: 10px;">{{ retry.component }}</td>
+                        <td style="padding: 10px; color: #856404;">{{ retry.detail }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            {% endif %}
 
             <h2 id="summary">Summary</h2>
 
@@ -477,6 +545,27 @@
                                 {% if fg_added + fg_removed > 0 %}
                                 {{ fg_added + fg_removed }} total changes
                                 {% else %}-{% endif %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% if ocm_version_gate %}
+                    <tr>
+                        <td><strong>CHECK #7:</strong> OCM Version Gates</td>
+                        <td>
+                            {% if ocm_version_gate.validation_result == 'PASS' %}
+                            <span class="added">✅ PASS</span> (Info)
+                            {% else %}
+                            <span class="removed">❌ FAIL</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: center;">{{ ocm_version_gate.comparison.new_gates_count }}</td>
+                        <td style="text-align: center;">{{ ocm_version_gate.comparison.deprecated_gates_count }}</td>
+                        <td>
+                            {% if ocm_version_gate.is_mock_data %}
+                            <span class="changed">⚠️ Mock Data Mode</span>
+                            {% else %}
+                            Active gates: {{ ocm_version_gate.gates_count.target }} (target) / {{ ocm_version_gate.gates_count.baseline }} (baseline)
                             {% endif %}
                         </td>
                     </tr>
@@ -855,6 +944,101 @@
             {% endif %}
             {% endif %}
 
+            {% if ocm_version_gate %}
+            <h2 id="ocm-version-gates">OCM Version Gate Details</h2>
+
+            {% if ocm_version_gate.is_mock_data %}
+            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px;">
+                <h4 style="color: #856404; margin-top: 0;">⚠️ Mock/Simulated Data Mode</h4>
+                <p>This report was generated using simulated OCM data because no OCM token or CLI authentication was detected.</p>
+            </div>
+            {% endif %}
+
+            {% if not ocm_version_gate.configuration_validation.valid %}
+            <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 5px;">
+                <h4 style="color: #721c24; margin-top: 0;">❌ Configuration Validation Errors</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #721c24;">
+                    {% for error in ocm_version_gate.configuration_validation.errors %}
+                    <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px;">
+                <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; border-radius: 5px;">
+                    <h4 style="margin-top: 0; color: #495057;">Active Gates Summary</h4>
+                    <p style="margin: 5px 0;"><strong>Baseline Version:</strong> <code>{{ ocm_version_gate.baseline_minor }}</code></p>
+                    <p style="margin: 5px 0;"><strong>Baseline Gates Count:</strong> <span class="badge {% if ocm_version_gate.gates_count.baseline > 0 %}success{% else %}warning{% endif %}" style="padding: 2px 8px; border-radius: 3px; font-weight: bold;">{{ ocm_version_gate.gates_count.baseline }}</span></p>
+                    <p style="margin: 5px 0;"><strong>Target Version:</strong> <code>{{ ocm_version_gate.target_minor }}</code></p>
+                    <p style="margin: 5px 0;"><strong>Target Gates Count:</strong> <span class="badge {% if ocm_version_gate.gates_count.target > 0 %}success{% else %}error{% endif %}" style="padding: 2px 8px; border-radius: 3px; font-weight: bold;">{{ ocm_version_gate.gates_count.target }}</span></p>
+                </div>
+                <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; border-radius: 5px;">
+                    <h4 style="margin-top: 0; color: #495057;">Gate Changes</h4>
+                    <p style="margin: 5px 0;"><strong>New Gates Configured:</strong> <span style="font-weight: bold; color: #28a745;">{{ ocm_version_gate.comparison.new_gates_count }}</span></p>
+                    <p style="margin: 5px 0;"><strong>Deprecated/Old Gates:</strong> <span style="font-weight: bold; color: #dc3545;">{{ ocm_version_gate.comparison.deprecated_gates_count }}</span></p>
+                </div>
+            </div>
+
+            <!-- Target Gates Details -->
+            <h3>Target Version Gates ({{ ocm_version_gate.target_minor }}.x)</h3>
+            {% if ocm_version_gate.gates_count.target > 0 %}
+                {% for gate in ocm_version_gate.target_gates %}
+                <div style="border: 1px solid #dee2e6; border-radius: 6px; padding: 15px; margin-bottom: 15px; background-color: #fff;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e9ecef; padding-bottom: 8px; margin-bottom: 10px;">
+                        <span style="font-family: monospace; font-weight: bold; background-color: #f1f3f5; padding: 2px 6px; border-radius: 4px;">{{ gate.label }}</span>
+                        <span style="font-size: 0.85em; color: #6c757d; font-family: monospace;">ID: {{ gate.id }}</span>
+                    </div>
+                    <div style="font-size: 1.05em; font-weight: 500; margin-bottom: 10px;">{{ gate.description }}</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.9em; color: #495057; margin-bottom: 10px;">
+                        <span style="background-color: #e9ecef; padding: 2px 8px; border-radius: 4px;">Value: {{ gate.value }}</span>
+                        <span style="background-color: #e9ecef; padding: 2px 8px; border-radius: 4px;">Prefix: {{ gate.version_raw_id_prefix }}</span>
+                        {% if gate.sts_only %}
+                        <span style="background-color: #cff4fc; color: #055160; padding: 2px 8px; border-radius: 4px; font-weight: 500;">STS Only</span>
+                        {% else %}
+                        <span style="background-color: #e2e3e5; padding: 2px 8px; border-radius: 4px;">All Clusters (Non-STS &amp; STS)</span>
+                        {% endif %}
+                        {% if gate.documentation_url %}
+                        <a href="{{ gate.documentation_url }}" target="_blank" style="background-color: #e8f0fe; color: #1a73e8; padding: 2px 8px; border-radius: 4px; text-decoration: none; font-weight: 500;">Docs ↗</a>
+                        {% endif %}
+                    </div>
+                    {% if gate.warning_message %}
+                    <div style="background-color: #fdf2f2; border-left: 3px solid #dc3545; padding: 10px; border-radius: 4px; font-size: 0.95em; color: #a12020;">
+                        <strong>Warning:</strong> {{ gate.warning_message }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div style="background-color: #fdf2f2; border: 1px solid #f5c2c2; padding: 15px; border-radius: 5px; color: #721c24; margin-bottom: 25px;">
+                    <strong>Missing Target Version Gates:</strong> No version gates are active for target minor version prefix <code>{{ ocm_version_gate.target_minor }}</code> in OCM.
+                </div>
+            {% endif %}
+
+            <!-- Baseline Gates Details -->
+            <h3>Baseline Version Gates ({{ ocm_version_gate.baseline_minor }}.x)</h3>
+            {% if ocm_version_gate.gates_count.baseline > 0 %}
+                {% for gate in ocm_version_gate.baseline_gates %}
+                <div style="border: 1px solid #dee2e6; border-radius: 6px; padding: 15px; margin-bottom: 15px; background-color: #fdfdfd; opacity: 0.85;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e9ecef; padding-bottom: 8px; margin-bottom: 10px;">
+                        <span style="font-family: monospace; font-weight: bold; background-color: #e9ecef; padding: 2px 6px; border-radius: 4px;">{{ gate.label }}</span>
+                        <span style="font-size: 0.85em; color: #6c757d; font-family: monospace;">ID: {{ gate.id }}</span>
+                    </div>
+                    <div style="font-size: 1.05em; color: #495057; margin-bottom: 10px;">{{ gate.description }}</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.9em; color: #6c757d;">
+                        <span>Value: {{ gate.value }}</span>
+                        <span>Prefix: {{ gate.version_raw_id_prefix }}</span>
+                        {% if gate.sts_only %}
+                        <span style="background-color: #cff4fc; color: #055160; padding: 2px 8px; border-radius: 4px; font-size: 0.85em;">STS Only</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p style="color: #6c757d; font-style: italic;">No version gates were detected for baseline version {{ ocm_version_gate.baseline_minor }}.x.</p>
+            {% endif %}
+            {% endif %}
+
             {% if feature_gates %}
             <h2 id="feature-gates">Feature Gate Details</h2>
 
@@ -1073,6 +1257,7 @@
             {% endif %}
             {% endif %}
             {% endif %}
+
 
             <div class="footer">
                 Generated by <a href="https://github.com/openshift-online/rosa-gap-analysis" target="_blank" style="color: #007bff; text-decoration: none;">ROSA Gap Analysis</a> automation

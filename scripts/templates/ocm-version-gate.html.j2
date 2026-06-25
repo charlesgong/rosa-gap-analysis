@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCM Version Gate Gap Analysis</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --neutral-dark: #1f2937;
+            --neutral-light: #f9fafb;
+            --border-color: #e5e7eb;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.5;
+            color: var(--neutral-dark);
+            background-color: #f3f4f6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+        }
+
+        .title-area h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .title-area p {
+            margin: 0;
+            color: #6b7280;
+            font-size: 0.95rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-pass {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-warn {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .card {
+            background-color: var(--neutral-light);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .card h2 {
+            margin-top: 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            color: #374151;
+        }
+
+        .meta-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .meta-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed var(--border-color);
+        }
+
+        .meta-list li:last-child {
+            border-bottom: none;
+        }
+
+        .meta-label {
+            font-weight: 500;
+            color: #6b7280;
+        }
+
+        .meta-value {
+            font-weight: 600;
+            font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+            color: #111827;
+        }
+
+        .alert-banner {
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 32px;
+            display: flex;
+            align-items: center;
+            font-weight: 500;
+        }
+
+        .alert-banner-warning {
+            background-color: #fffbeb;
+            border-left: 4px solid var(--warning);
+            color: #92400e;
+        }
+
+        .alert-banner-error {
+            background-color: #fef2f2;
+            border-left: 4px solid var(--error);
+            color: #991b1b;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 32px;
+        }
+
+        th {
+            background-color: #f3f4f6;
+            color: #4b5563;
+            text-align: left;
+            padding: 12px 16px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        td {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+            font-size: 0.95rem;
+        }
+
+        tr:hover {
+            background-color: #f9fafb;
+        }
+
+        .code-block {
+            font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+            background-color: #f3f4f6;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            color: #1f2937;
+        }
+
+        .gate-card {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            background-color: white;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .gate-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        }
+
+        .gate-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .gate-id {
+            font-size: 0.85rem;
+            color: #6b7280;
+            font-family: monospace;
+        }
+
+        .gate-description {
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 12px;
+        }
+
+        .gate-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 0.85rem;
+        }
+
+        .meta-tag {
+            background-color: #f3f4f6;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #4b5563;
+        }
+
+        .meta-tag-sts {
+            background-color: #e0f2fe;
+            color: #0369a1;
+            font-weight: 500;
+        }
+
+        .text-error {
+            color: var(--error);
+            font-weight: 500;
+        }
+
+        .text-success {
+            color: var(--success);
+            font-weight: 500;
+        }
+
+        .footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+            color: #9ca3af;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title-area">
+                <h1>OCM Version Gate Gap Analysis</h1>
+                <p>Validation &amp; configuration checks for Cluster Management Version Gates</p>
+            </div>
+            <div>
+                {% if validation_result == 'PASS' %}
+                <span class="badge badge-pass">PASSED</span>
+                {% elif validation_result == 'WARN' %}
+                <span class="badge badge-warn">WARNING</span>
+                {% else %}
+                <span class="badge badge-error">FAILED</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if is_mock_data %}
+        <div class="alert-banner alert-banner-warning">
+            <span style="font-size: 1.5rem; margin-right: 12px;">⚠️</span>
+            <div>
+                <strong>Dry-run / Mock Data Mode:</strong> This report was generated using simulated OCM data because no OCM token or CLI authentication was detected.
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not configuration_validation.valid %}
+        <div class="alert-banner alert-banner-error">
+            <span style="font-size: 1.5rem; margin-right: 12px;">❌</span>
+            <div>
+                <strong>Configuration Validation Errors Detected:</strong>
+                <ul style="margin: 8px 0 0 0; padding-left: 20px;">
+                    {% for error in configuration_validation.errors %}
+                    <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="grid-2">
+            <!-- Metadata Card -->
+            <div class="card">
+                <h2>Run Metadata</h2>
+                <ul class="meta-list">
+                    <li>
+                        <span class="meta-label">Analysis Timestamp</span>
+                        <span class="meta-value">{{ timestamp }}</span>
+                    </li>
+                    <li>
+                        <span class="meta-label">Baseline Release</span>
+                        <span class="meta-value">{{ baseline }}</span>
+                    </li>
+                    <li>
+                        <span class="meta-label">Target Release</span>
+                        <span class="meta-value">{{ target }}</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Summary Card -->
+            <div class="card">
+                <h2>Analysis Summary</h2>
+                <ul class="meta-list">
+                    <li>
+                        <span class="meta-label">Baseline Gates Found</span>
+                        <span class="meta-value {% if gates_count.baseline > 0 %}text-success{% else %}text-error{% endif %}">
+                            {{ gates_count.baseline }}
+                        </span>
+                    </li>
+                    <li>
+                        <span class="meta-label">Target Gates Found</span>
+                        <span class="meta-value {% if gates_count.target > 0 %}text-success{% else %}text-error{% endif %}">
+                            {{ gates_count.target }}
+                        </span>
+                    </li>
+                    <li>
+                        <span class="meta-label">New Gates Introduced</span>
+                        <span class="meta-value" style="color: var(--primary)">
+                            {{ comparison.new_gates_count }}
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Target Version Gates Detailed Status -->
+        <h2>Target Version Gates Analysis ({{ target_minor }}.x)</h2>
+        {% if gates_count.target > 0 %}
+            <div style="margin-bottom: 32px;">
+                <p>The following OCM version gate configurations are active for OCP version prefix <code class="code-block">{{ target_minor }}</code>:</p>
+                {% for gate in target_gates %}
+                <div class="gate-card">
+                    <div class="gate-header">
+                        <span class="code-block" style="font-weight: 600;">{{ gate.label }}</span>
+                        <span class="gate-id">ID: {{ gate.id }}</span>
+                    </div>
+                    <div class="gate-description">{{ gate.description }}</div>
+                    <div class="gate-meta">
+                        <span class="meta-tag">Prefix: {{ gate.version_raw_id_prefix }}</span>
+                        <span class="meta-tag">Value: {{ gate.value }}</span>
+                        {% if gate.sts_only %}
+                        <span class="meta-tag meta-tag-sts">STS Only</span>
+                        {% else %}
+                        <span class="meta-tag">All Clusters (Non-STS &amp; STS)</span>
+                        {% endif %}
+                        {% if gate.documentation_url %}
+                        <a href="{{ gate.documentation_url }}" target="_blank" class="meta-tag" style="color: var(--primary); text-decoration: none;">Doc Link &nearr;</a>
+                        {% endif %}
+                    </div>
+                    {% if gate.warning_message %}
+                    <div style="margin-top: 12px; padding: 10px; background-color: #fee2e2; border-radius: 4px; font-size: 0.9rem; color: #991b1b; font-weight: 500;">
+                        <strong>Warning Message:</strong> {{ gate.warning_message }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="alert-banner alert-banner-error">
+                <span style="font-size: 1.5rem; margin-right: 12px;">❌</span>
+                <div>
+                    <strong>Missing Target Version Gate:</strong> No gates have been configured for the target minor version <code class="code-block">{{ target_minor }}</code> in OCM. Ensure target gates are defined prior to GA promotion.
+                </div>
+            </div>
+        {% endif %}
+
+        <!-- Baseline Version Gates (y-1) -->
+        <h2>Baseline Version Gates Reference ({{ baseline_minor }}.x)</h2>
+        {% if gates_count.baseline > 0 %}
+            <div style="margin-bottom: 32px;">
+                <p>The following gates were configured for the baseline version <code class="code-block">{{ baseline_minor }}</code>:</p>
+                {% for gate in baseline_gates %}
+                <div class="gate-card" style="opacity: 0.85;">
+                    <div class="gate-header">
+                        <span class="code-block" style="font-weight: 600; background-color: #e5e7eb;">{{ gate.label }}</span>
+                        <span class="gate-id">ID: {{ gate.id }}</span>
+                    </div>
+                    <div class="gate-description" style="color: #4b5563;">{{ gate.description }}</div>
+                    <div class="gate-meta">
+                        <span class="meta-tag">Prefix: {{ gate.version_raw_id_prefix }}</span>
+                        <span class="meta-tag">Value: {{ gate.value }}</span>
+                        {% if gate.sts_only %}
+                        <span class="meta-tag meta-tag-sts">STS Only</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p style="color: #6b7280; font-style: italic; margin-bottom: 32px;">No version gates were detected for baseline version {{ baseline_minor }}.x.</p>
+        {% endif %}
+
+        <div class="footer">
+            Generated by ROSA Gap Analysis Automation tool | CHECK #8: OCM Version Gate Analysis
+        </div>
+    </div>
+</body>
+</html>
