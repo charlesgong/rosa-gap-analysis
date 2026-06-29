@@ -112,6 +112,7 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 | **8** | gap-ocm-version-gate.py | OCM version gate existence, configurations, and metadata for target OCP versions (compared against baseline version gates). Exits 0 on validation findings; fallback gracefully if OCM offline token / CLI is absent. | No |
 
 
+
 **Expected baseline**: For target X.Y, baseline is X.(Y-1). Example: 4.22 expects 4.21 baseline.
 
 ## Critical Implementation Details

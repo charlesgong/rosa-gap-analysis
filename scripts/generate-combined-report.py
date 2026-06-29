@@ -32,6 +32,14 @@ def parse_build_log(log_path):
     if not log_path or not os.path.exists(log_path):
         return metrics
 
+    # Determine build log URL
+    job = os.environ.get('job') or os.environ.get('JOB_NAME')
+    buildid = os.environ.get('buildid') or os.environ.get('BUILD_ID')
+    if job and buildid:
+        metrics['build_log_url'] = f"https://prow.ci.openshift.org/view/gs/test-platform-results/logs/{job}/{buildid}/build-log.txt"
+    else:
+        metrics['build_log_url'] = f"file://{os.path.abspath(log_path)}"
+
     try:
         with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -67,7 +75,8 @@ def parse_build_log(log_path):
             metrics['failures'].append({
                 'type': 'Build Failure',
                 'component': component,
-                'detail': f"Build of image '{component}' failed during the run."
+                'detail': f"Build of image '{component}' failed during the run.",
+                'log_url': metrics.get('build_log_url')
             })
 
         # 5. Extract retry events
@@ -87,7 +96,8 @@ def parse_build_log(log_path):
             metrics['failures'].append({
                 'type': 'Script Exception',
                 'component': 'Test Validation Step',
-                'detail': traceback_text
+                'detail': traceback_text,
+                'log_url': metrics.get('build_log_url')
             })
 
         # 7. Extract specific failed pod details
@@ -96,11 +106,33 @@ def parse_build_log(log_path):
             metrics['failures'].append({
                 'type': 'Pod Failure',
                 'component': pod_fail_match.group(1),
-                'detail': f"Pod failed after {pod_fail_match.group(2)}. Failed containers: {pod_fail_match.group(3)}"
+                'detail': f"Pod failed after {pod_fail_match.group(2)}. Failed containers: {pod_fail_match.group(3)}",
+                'log_url': metrics.get('build_log_url')
+            })
+
+        # 8. Extract error log lines into failures
+        if error_lines:
+            # Take up to 20 lines of errors to avoid bloating the report
+            error_summary = "\n".join(error_lines[:20])
+            if len(error_lines) > 20:
+                error_summary += f"\n... and {len(error_lines) - 20} more error lines."
+            
+            metrics['failures'].append({
+                'type': 'Log Errors Detected',
+                'component': 'Build Log',
+                'detail': error_summary,
+                'log_url': metrics.get('build_log_url')
             })
 
     except Exception as e:
-        print(f"Error parsing build log: {e}")
+        log_info(f"Error parsing build log: {e}")
+        metrics['status'] = 'FAILED'
+        metrics['failures'].append({
+            'type': 'Build Log Parsing Error',
+            'component': 'Build Log Parser',
+            'detail': f"An error occurred while parsing the build log at {log_path}: {str(e)}",
+            'log_url': metrics.get('build_log_url')
+        })
 
     return metrics
 
@@ -208,7 +240,7 @@ def main():
 
     # Load report data
     report_data = {
-        'type': 'Full Gap Analysis',
+        'type': 'Aggregated Gap Analysis Dashboard and Build Log Summary',
         'baseline': args.baseline,
         'target': args.target,
         'timestamp': datetime.now().isoformat(),
@@ -244,7 +276,6 @@ def main():
         with open(reports['ocm_version_gate'], 'r') as f:
             report_data['ocm_version_gate'] = json.load(f)
         log_info(f"Loaded OCM Version Gate report: {reports['ocm_version_gate']}")
-
 
 
     # Generate combined reports

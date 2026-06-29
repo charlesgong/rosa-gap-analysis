@@ -17,6 +17,7 @@ All scripts use a consistent global check numbering system:
 | **8** | OCM Version Gates | Validates OCM version gate existence, configurations, and metadata for target OCP versions compared to baseline version gates | Always PASS (exit code 0) |
 
 
+
 ## Check Execution by Script
 
 ### gap-aws-sts.py
