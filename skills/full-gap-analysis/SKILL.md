@@ -4,7 +4,7 @@ description: >
   Comprehensive gap analysis between OpenShift versions covering AWS STS policies,
   GCP WIF policies, feature gates, and OCP admin gate acknowledgments. Use when
   performing complete version upgrade assessment for managed OpenShift (OSD, ROSA).
-  Exits 1 if any validation check (CHECK #1-5) fails; exits 0 if all checks pass.
+  Exits 1 if any validation check (CHECK #1-7) fails; exits 0 if all checks pass. CHECK #8 (Feature Gates) is Info only.
 compatibility:
   required_tools:
     - oc
@@ -120,7 +120,7 @@ The script:
 - Generates JSON reports for each analysis (used for combined report)
 - Generates combined report aggregating all analyses (HTML, JSON)
 - Logs detected differences to stdout/stderr
-- Exits 1 if any validation check (CHECK #1-5) fails
+- Exits 1 if any validation check (CHECK #1-7) fails
 - Exits 0 only when all validation checks pass
 - Also exits 1 on execution failures (missing tools, network errors, etc.)
 
@@ -236,7 +236,7 @@ Analyzes all of:
 - Feature gate changes
 - OCP admin gate acknowledgments
 
-Exits 1 if any validation check (CHECK #1-5) fails; exits 0 if all checks pass.
+Exits 1 if any validation check (CHECK #1-7) fails; exits 0 if all checks pass. CHECK #8 (Feature Gates) is Info only.
 
 ## Enhanced Analysis
 
@@ -331,7 +331,7 @@ Exit code: `0` - All validation checks PASSED
 [INFO] Feature Gates: Differences detected
 [INFO] Differences detected - review recommended
 ```
-Exit code: `0` (validation PASSED) or `1` (validation FAILED - CHECK #1-5)
+Exit code: `0` (validation PASSED) or `1` (validation FAILED - CHECK #1-7)
 
 **Next steps when changes detected:**
 1. Run individual platform scripts to get detailed information

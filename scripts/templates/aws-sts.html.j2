@@ -91,6 +91,32 @@
             border-radius: 3px;
             font-family: 'Courier New', monospace;
         }
+        .alert {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .alert.error {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        .alert.success {
+            background-color: #e8f5e9;
+            border-color: #28a745;
+            color: #155724;
+        }
+        .alert.warning {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        .alert.info {
+            background-color: #d1ecf1;
+            border-color: #17a2b8;
+            color: #0c5460;
+        }
         .footer {
             margin-top: 40px;
             padding-top: 20px;
@@ -110,6 +136,27 @@
             <p><strong>Baseline Version:</strong> <code>{{ baseline }}</code></p>
             <p><strong>Target Version:</strong> <code>{{ target }}</code></p>
         </div>
+
+        <h2>AWS Marketplace Enablement</h2>
+        {% if aws_marketplace %}
+        <div class="alert {% if aws_marketplace.status == 'PASS' %}success{% elif aws_marketplace.status == 'WARN' %}warning{% else %}error{% endif %}">
+            <h3>{% if aws_marketplace.status == 'PASS' %}✅{% elif aws_marketplace.status == 'WARN' %}⚠️{% else %}❌{% endif %} AWS Marketplace Status</h3>
+            <p>{{ aws_marketplace.message }}</p>
+
+            {% if aws_marketplace.channels %}
+            <h4>Channel Breakdown:</h4>
+            <ul>
+                {% for chan, results in aws_marketplace.channels.items() %}
+                <li style="margin-bottom: 15px; list-style-type: none; background-color: rgba(255,255,255,0.6); padding: 10px; border-radius: 4px;">
+                    <strong>Channel Group:</strong> <code>{{ chan }}</code><br/>
+                    <strong>ROSA Classic (AWS):</strong> {% if results.rosa_classic %}<span class="added">✅ FOUND ({{ results.rosa_classic_output }})</span>{% else %}<span class="removed">❌ MISSING</span>{% endif %}<br/>
+                    <strong>ROSA HCP (AWS):</strong> {% if results.rosa_hcp %}<span class="added">✅ FOUND ({{ results.rosa_hcp_output }})</span>{% else %}<span class="removed">❌ MISSING</span>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endif %}
 
         <h2>Summary</h2>
 

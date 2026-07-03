@@ -4,6 +4,8 @@
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -366,6 +368,69 @@ def print_analysis(analysis, baseline, target):
         log_success(f"\n✅ UPGRADE READY: All gates acknowledged for {baseline} → {target}")
 
 
+def check_ocm_version_gates(target_version):
+    """Verify OCM version gates configuration. Scoped to 4.x versions only."""
+    major = target_version.split(".")[0]
+    if major != "4":
+        log_info(f"Skipping OCM version gates check for {major}.x (only applicable to 4.x versions).")
+        return {
+            'status': 'PASS',
+            'message': f'OCM version gates check skipped for {major}.x (only applicable to 4.x).',
+            'gates': []
+        }
+
+    ocm_path = shutil.which("ocm")
+    if not ocm_path:
+        log_warning("OCM CLI binary missing in PATH. Skipped version gates check.")
+        return {
+            'status': 'WARN',
+            'message': 'OCM CLI binary missing in PATH. Skipped version gates check.',
+            'gates': []
+        }
+
+    try:
+        log_info("Fetching OCM version gates via 'ocm' CLI...")
+        cmd = ["ocm", "get", "/api/clusters_mgmt/v1/version_gates"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            log_warning("Failed to query OCM version gates via 'ocm' CLI (is 'ocm' CLI logged in?). Skipped check.")
+            return {
+                'status': 'WARN',
+                'message': f"Failed to query 'ocm get /api/clusters_mgmt/v1/version_gates' (returncode={proc.returncode}). Ensure 'ocm' CLI is logged in.",
+                'gates': []
+            }
+
+        gates_data = json.loads(proc.stdout)
+        version_prefix = ".".join(target_version.split(".")[:2])
+        matching_gates = []
+        if gates_data and "items" in gates_data:
+            for gate in gates_data["items"]:
+                if version_prefix in gate.get("version_raw_id_prefix", ""):
+                    matching_gates.append(gate)
+                    
+        if matching_gates:
+            log_success(f"Found {len(matching_gates)} configured OCM version gate(s) for {version_prefix}.x")
+            return {
+                'status': 'PASS',
+                'message': f"Found {len(matching_gates)} configured version gates for {version_prefix}.x.",
+                'gates': matching_gates
+            }
+        else:
+            log_warning(f"No configured OCM version gates found for {version_prefix}.x")
+            return {
+                'status': 'WARN',
+                'message': f"No specific version gates found for release prefix {version_prefix}.x. Ensure none are required.",
+                'gates': []
+            }
+    except Exception as e:
+        log_error(f"Failed to fetch or process OCM version gates: {e}")
+        return {
+            'status': 'FAIL',
+            'message': f"Failed to fetch OCM version gates: {e}",
+            'gates': []
+        }
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -493,6 +558,10 @@ Exit Codes:
             for error in structure_validation['errors']:
                 log_error(f"  - {error}")
 
+        # Check OCM Version Gates
+        log_info("\nChecking OCM Version Gates...")
+        ocm_gates_result = check_ocm_version_gates(target_full)
+
         # Generate reports
         report_dir = args.report_dir
         os.makedirs(report_dir, exist_ok=True)
@@ -513,6 +582,10 @@ Exit Codes:
             gates_valid = (unacked_count == 0 and not analysis['ack_file_missing'])
             overall_valid = gates_valid and structure_validation['valid']
 
+        # Include OCM version gates status in overall validation result (fail if OCM gates check failed)
+        ocm_gates_valid = ocm_gates_result['status'] != 'FAIL'
+        overall_valid = overall_valid and ocm_gates_valid
+
         validation_result = 'PASS' if overall_valid else 'FAIL'
         upgrade_ready = overall_valid  # For backward compatibility in reports
 
@@ -527,6 +600,7 @@ Exit Codes:
             'timestamp': datetime.now().isoformat(),
             'validation_result': validation_result,
             'structure_validation': structure_validation,
+            'ocm_version_gates': ocm_gates_result,
             'analysis': analysis,
             'summary': {
                 'gates_requiring_ack': gates_count,
@@ -566,11 +640,14 @@ Exit Codes:
             log_error(f"Location: {mcc_ocp_ack_url}")
             log_error("")
 
+            if ocm_gates_result['status'] == 'FAIL':
+                log_error(f"OCM Version Gates validation failed: {ocm_gates_result['message']}")
+
             if gates_count > 0:
                 if unacked_count > 0:
                     log_error(f"Gate acknowledgments failed: {unacked_count} gate(s) not acknowledged")
                 if analysis['ack_file_missing']:
-                    log_error("admin-ack.yaml required but not found")
+                     log_error("admin-ack.yaml required but not found")
 
             if not structure_validation['valid']:
                 log_error("Acknowledgment structure validation failed:")
@@ -595,7 +672,6 @@ Exit Codes:
                 status="FAIL",
                 details=status_details,
                 report_dir=args.report_dir,
-                add_timestamp=True
             )
 
             sys.exit(1)
@@ -637,7 +713,6 @@ Exit Codes:
                 status="PASS",
                 details=status_details,
                 report_dir=args.report_dir,
-                add_timestamp=True
             )
 
             sys.exit(0)

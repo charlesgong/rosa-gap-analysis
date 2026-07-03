@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Run all gap analyses
 # Orchestrates execution of all individual gap analysis scripts
 
@@ -33,7 +33,7 @@ Optional Arguments:
   --target <version>       Target version (must be used with --baseline)
   --version <version>      Single version to analyze (auto-resolves baseline and target)
   --steps <steps>          Comma-separated list of steps to run (default: all)
-                           Available: aws,gcp,ocp,ocm-version-gate,versions-channels,feature-gates
+                           Available: aws,gcp,ocp,versions-channels,ocm-version-gate,feature-gates
                            Example: --steps aws,gcp (runs only AWS and GCP)
   --dry-run                Show resolved versions and exit without running analysis
   --verbose                Enable verbose logging
@@ -252,9 +252,9 @@ if [[ -n "$STEPS" ]]; then
         # Trim whitespace
         step=$(echo "$step" | xargs)
 
-        if [[ "$step" != "aws" ]] && [[ "$step" != "gcp" ]] && [[ "$step" != "ocp" ]] && [[ "$step" != "ocm-version-gate" ]] && [[ "$step" != "versions-channels" ]] && [[ "$step" != "feature-gates" ]]; then
+        if [[ "$step" != "aws" ]] && [[ "$step" != "gcp" ]] && [[ "$step" != "ocp" ]] && [[ "$step" != "versions-channels" ]] && [[ "$step" != "ocm-version-gate" ]] && [[ "$step" != "feature-gates" ]]; then
             log_error "Invalid step: $step"
-            log_error "Valid steps are: aws, gcp, ocp, ocm-version-gate, versions-channels, feature-gates"
+            log_error "Valid steps are: aws, gcp, ocp, versions-channels, ocm-version-gate, feature-gates"
             exit 1
         fi
     done
@@ -262,7 +262,7 @@ if [[ -n "$STEPS" ]]; then
     log_info "Steps to run: ${STEPS_ARRAY[*]}"
 else
     # Default: run all steps
-    STEPS_ARRAY=("aws" "gcp" "ocp" "ocm-version-gate" "feature-gates" "versions-channels")
+    STEPS_ARRAY=("aws" "gcp" "ocp" "versions-channels" "ocm-version-gate" "feature-gates")
 fi
 
 # Dry-run mode: show resolved versions and exit
@@ -303,6 +303,9 @@ main() {
 
     # Create report directory if it doesn't exist
     mkdir -p "$REPORT_DIR"
+
+    # Clean up old status check files to avoid stale reports
+    rm -f "${REPORT_DIR}"/status-check-*.json
 
     log_info "========================================="
     log_info "  OpenShift Gap Analysis Suite"
@@ -368,9 +371,9 @@ main() {
         ["aws"]=1
         ["gcp"]=2
         ["ocp"]=3
-        ["ocm-version-gate"]=4
-        ["feature-gates"]=5
-        ["versions-channels"]=7
+        ["versions-channels"]=6
+        ["ocm-version-gate"]=7
+        ["feature-gates"]=8
     )
     declare -A check_name=(
         ["aws"]="AWS STS Policy Gap"
@@ -384,8 +387,8 @@ main() {
         ["aws"]="standard"
         ["gcp"]="standard"
         ["ocp"]="standard"
-        ["ocm-version-gate"]="informational"
-        ["versions-channels"]="informational"
+        ["versions-channels"]="standard"
+        ["ocm-version-gate"]="standard"
         ["feature-gates"]="informational"
     )
     declare -A check_count_field=(
@@ -425,11 +428,30 @@ main() {
         if [[ -f "$status_file" ]]; then
             check_status[$step]=$(jq -r '.status' "$status_file" 2>/dev/null || echo "UNKNOWN")
             check_message[$step]=$(jq -r '.details.message' "$status_file" 2>/dev/null || echo "status unavailable")
-            check_diff_count[$step]=$(jq -r ".details.${count_field} // 0" "$status_file" 2>/dev/null || echo "0")
+            if [[ -n "$count_field" ]]; then
+                check_diff_count[$step]=$(jq -r ".details.${count_field} // 0" "$status_file" 2>/dev/null || echo "0")
+            else
+                check_diff_count[$step]=0
+            fi
         else
-            check_status[$step]="UNKNOWN"
-            check_message[$step]="status file not found"
-            check_diff_count[$step]=0
+            # Create fallback status file so subsequent layers (like combined report) can parse it
+            local name="${check_name[$step]}"
+            check_status[$step]="FAIL"
+            check_message[$step]="Script execution failed or crashed"
+            check_diff_count[$step]=1
+
+            cat <<EOF > "$status_file"
+{
+  "check_number": $num,
+  "check_name": "$name",
+  "status": "FAIL",
+  "exit_code": 1,
+  "details": {
+    "message": "Script execution failed or crashed",
+    "${count_field:-critical_failures}": 1
+  }
+}
+EOF
         fi
     }
 
@@ -486,10 +508,10 @@ main() {
             --target "$TARGET" \
             --report-dir "$REPORT_DIR" \
             $VERBOSE_FLAG 2>&1; then
-            check_results[aws]=0
+            check_results["aws"]=0
         else
             local exit_code=$?
-            check_results[aws]=1
+            check_results["aws"]=1
             log_error "AWS STS analysis script failed with exit code $exit_code"
         fi
 
@@ -506,10 +528,10 @@ main() {
             --target "$TARGET" \
             --report-dir "$REPORT_DIR" \
             $VERBOSE_FLAG 2>&1; then
-            check_results[gcp]=0
+            check_results["gcp"]=0
         else
             local exit_code=$?
-            check_results[gcp]=1
+            check_results["gcp"]=1
             log_error "GCP WIF analysis script failed with exit code $exit_code"
         fi
 
@@ -526,36 +548,15 @@ main() {
             --target "$TARGET" \
             --report-dir "$REPORT_DIR" \
             $VERBOSE_FLAG 2>&1; then
-            check_results[ocp]=0
+            check_results["ocp"]=0
         else
             local exit_code=$?
-            check_results[ocp]=1
+            check_results["ocp"]=1
             log_error "OCP Admin Gate Acknowledgment analysis script failed with exit code $exit_code"
         fi
 
         # Read status file
         read_check_status "ocp"
-    fi
-
-    # Run OCM Version Gate analysis (informational only - always passes on validation findings)
-    if should_run_step "ocm-version-gate"; then
-        log_info ""
-        log_info "Running OCM Version Gate Gap Analysis..."
-        if python3 "${SCRIPT_DIR}/gap-ocm-version-gate.py" \
-            --baseline "$BASELINE" \
-            --target "$TARGET" \
-            --report-dir "$REPORT_DIR" \
-            $VERBOSE_FLAG 2>&1; then
-            check_results[ocm-version-gate]=0
-            check_status[ocm-version-gate]="PASS"
-            check_message[ocm-version-gate]="OCM version gate analysis passed"
-        else
-            local exit_code=$?
-            check_results[ocm-version-gate]=1
-            check_status[ocm-version-gate]="FAIL"
-            check_message[ocm-version-gate]="OCM version gate analysis failed with exit code $exit_code"
-        fi
-        check_diff_count[ocm-version-gate]=0
     fi
 
     # Run Versions & Channels analysis (informational only - always passes)
@@ -578,8 +579,29 @@ main() {
         read_check_status "versions-channels"
     fi
 
-    # Run Feature Gates analysis (informational only - always passes)
-    # IMPORTANT: Feature Gates should always be executed last, even if new checks are added in the future
+    # Run OCM Version Gate analysis (informational only - always passes on validation findings)
+    if should_run_step "ocm-version-gate"; then
+        log_info ""
+        log_info "Running OCM Version Gate Gap Analysis..."
+        if python3 "${SCRIPT_DIR}/gap-ocm-version-gate.py" \
+            --baseline "$BASELINE" \
+            --target "$TARGET" \
+            --report-dir "$REPORT_DIR" \
+            $VERBOSE_FLAG 2>&1; then
+            check_results["ocm-version-gate"]=0
+            check_status["ocm-version-gate"]="PASS"
+            check_message["ocm-version-gate"]="OCM version gate analysis passed"
+        else
+            local exit_code=$?
+            check_results["ocm-version-gate"]=1
+            check_status["ocm-version-gate"]="FAIL"
+            check_message["ocm-version-gate"]="OCM version gate analysis failed with exit code $exit_code"
+        fi
+        check_diff_count["ocm-version-gate"]=0
+    fi
+
+    # Run Feature Gates analysis (Info only - always passes)
+    # IMPORTANT: Feature Gates must always be the last check to execute, even if new checks are added in the future
     if should_run_step "feature-gates"; then
         log_info ""
         log_info "Running Feature Gates Gap Analysis..."
@@ -588,10 +610,10 @@ main() {
             --target "$TARGET" \
             --report-dir "$REPORT_DIR" \
             $VERBOSE_FLAG 2>&1; then
-            check_results[feature-gates]=0
+            check_results["feature-gates"]=0
         else
             local exit_code=$?
-            check_results[feature-gates]=1
+            check_results["feature-gates"]=1
             log_error "Feature Gates analysis script failed with exit code $exit_code"
         fi
 
@@ -621,7 +643,7 @@ main() {
     # If feature_gates_result=1, it means script execution error, which should fail
     local should_exit_fail=false
 
-    for step in aws gcp ocp ocm-version-gate feature-gates versions-channels; do
+    for step in aws gcp ocp versions-channels ocm-version-gate feature-gates; do
         if should_run_step "$step" && [[ ${check_results[$step]} -eq 1 ]]; then
             should_exit_fail=true
             break
@@ -632,7 +654,6 @@ main() {
     if [[ "$should_exit_fail" == "true" ]]; then
         log_error ""
         log_error "❌ FAILED"
-        exit 1
     else
         log_success ""
         log_success "✅ PASSED"
@@ -671,7 +692,7 @@ main() {
     done
 
     # Print individual check results
-    for step in aws gcp ocp ocm-version-gate feature-gates versions-channels; do
+    for step in aws gcp ocp versions-channels ocm-version-gate feature-gates; do
         if should_run_step "$step"; then
             print_individual_check "$step" "${check_num[$step]}" "${check_name[$step]}" \
                 "${check_results[$step]}" "${check_diff_count[$step]}" "${check_message[$step]}" \
@@ -683,7 +704,7 @@ main() {
 
     # Overall status with warnings
     local has_warnings=false
-    for step in aws gcp ocp ocm-version-gate feature-gates versions-channels; do
+    for step in aws gcp ocp versions-channels ocm-version-gate feature-gates; do
         if should_run_step "$step" && [[ ${check_results[$step]} -eq 0 ]] && [[ ${check_diff_count[$step]} -gt 0 ]]; then
             has_warnings=true
             break
@@ -720,6 +741,10 @@ main() {
     fi
 
     echo "==============================================================================="
+
+    if [[ "$should_exit_fail" == "true" ]]; then
+        exit 1
+    fi
 
 }
 

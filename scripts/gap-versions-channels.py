@@ -459,7 +459,7 @@ def print_analysis(channel_analysis, accepted_analysis, upgrade_analysis, consis
     baseline_minor = channel_analysis['baseline']['minor']
     target_minor = channel_analysis['target']['minor']
 
-    log_info("\nCHECK #7: Versions & Channels Analysis")
+    log_info("\nCHECK #6: Versions & Channels Analysis")
 
     # Channel availability
     log_info(f"\nBaseline {baseline_full} channel status:")
@@ -692,7 +692,7 @@ Exit Codes:
     log_success("=" * 60)
     log_success("✓ VALIDATION PASSED - Versions & Channels (Informational)")
     log_success("=" * 60)
-    log_success(f"\nCHECK #7: Versions & Channels Analysis [PASS - Informational]")
+    log_success(f"\nCHECK #6: Versions & Channels Analysis [PASS]")
     log_success(f"  Data Sources: Cincinnati API, Accepted Streams, Sippy")
 
     if is_z_stream:
@@ -745,12 +745,11 @@ Exit Codes:
     }
 
     generate_status_report(
-        check_number=7,
+        check_number=6,
         check_name="Versions & Channels",
         status="PASS",
         details=status_details,
-        report_dir=report_dir,
-        add_timestamp=True
+        report_dir=report_dir
     )
 
     sys.exit(0)

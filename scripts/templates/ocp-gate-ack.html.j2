@@ -148,6 +148,16 @@
             border-color: #dc3545;
             color: #721c24;
         }
+        .alert.success {
+            background-color: #e8f5e9;
+            border-color: #28a745;
+            color: #155724;
+        }
+        .alert.warning {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
         .alert.info {
             background-color: #d1ecf1;
             border-color: #17a2b8;
@@ -284,6 +294,30 @@
             <ul>
                 {% for error in structure_validation.errors %}
                 <li style="color: #721c24;">{{ error }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <h2>OCM Version Gates Validation</h2>
+
+        {% if ocm_version_gates %}
+        <div class="alert {% if ocm_version_gates.status == 'PASS' %}success{% elif ocm_version_gates.status == 'WARN' %}warning{% else %}error{% endif %}">
+            <h3>{% if ocm_version_gates.status == 'PASS' %}✅{% elif ocm_version_gates.status == 'WARN' %}⚠️{% else %}❌{% endif %} OCM Version Gates</h3>
+            <p><strong>Status:</strong> {{ ocm_version_gates.status }}</p>
+            <p>{{ ocm_version_gates.message }}</p>
+
+            {% if ocm_version_gates.gates %}
+            <h4>Configured Version Gates:</h4>
+            <ul>
+                {% for gate in ocm_version_gates.gates %}
+                <li style="margin-bottom: 15px; list-style-type: none; background-color: rgba(255,255,255,0.6); padding: 10px; border-radius: 4px;">
+                    <strong>ID:</strong> <code>{{ gate.id }}</code><br/>
+                    <strong>Version Raw ID Prefix:</strong> <code>{{ gate.version_raw_id_prefix }}</code><br/>
+                    <strong>Description:</strong> {{ gate.description }}<br/>
+                    <strong>Value to Confirm:</strong> <code>{{ gate.value_to_confirm }}</code>
+                </li>
                 {% endfor %}
             </ul>
             {% endif %}

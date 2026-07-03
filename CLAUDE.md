@@ -55,7 +55,8 @@ Claude follows an impact-based approach in this repository:
 - **Exit codes**: Exit 0 on successful execution even when differences found; exit 1 only on execution errors
 - **Version resolution**: CLI flags > env vars > auto-detect (Sippy API)
 - **Reports**: All scripts generate HTML/JSON simultaneously using Jinja2 templates
-- **Validation**: 6 globally numbered checks; checks 1-5 can FAIL, check 6 (feature gates) is informational only
+- **Validation**: 8 globally numbered checks; checks 1-7 are standard (can FAIL); CHECK #8 (Feature Gates) is informational only and always executes last
+- **GA Readiness Validation**: Standalone script (`scripts/prod/gap-ga-validation.py`) for SREs to run manually; not part of CI pipeline
 
 ## Essential Commands
 
@@ -84,6 +85,10 @@ BASE_VERSION=4.21 TARGET_VERSION=NIGHTLY ./scripts/gap-all.sh
 python3 ./scripts/gap-aws-sts.py --version 4.22
 python3 ./scripts/gap-aws-sts.py --baseline 4.21 --target 4.22
 
+# GA Readiness Validation (standalone, run manually by SREs - see docs/ga-readiness-validation.md)
+python3 ./scripts/prod/gap-ga-validation.py --version 4.22
+python3 ./scripts/prod/gap-ga-validation.py --baseline 4.21 --target 4.22
+
 # Container testing
 podman build -f ci/Containerfile -t gap-analysis:dev .
 podman run --rm gap-analysis:dev gap-all.sh --baseline 4.21 --target 4.22
@@ -108,10 +113,15 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 | **3** | gap-gcp-wif.py | GCP WIF templates in `resources/wif/{version}/` match OCP release (per-file comparison) | Yes |
 | **4** | gap-gcp-wif.py | GCP acknowledgment files in `deploy/osd-cluster-acks/wif/{version}/` | Yes |
 | **5** | gap-ocp-gate-ack.py | OCP admin gate acknowledgments in `deploy/osd-cluster-acks/ocp/{version}/` (conditional: if gates exist, both config.yaml + acknowledgment file required; if no gates, both files must be absent OR both files present with warning). **Acknowledgment file**: admin-ack.yaml OR admin-gates.yaml (either acceptable). **Check order**: acknowledgment file first, then config.yaml. If only one file present when no gates exist, validation fails. **Z-stream behavior**: For z-stream upgrades (e.g., 4.19.30 → 4.19.31), validates gates from 4.19 against acknowledgments in 4.20 (next minor) to detect if a z-stream adds a new gate. | Yes |
-| **6** | gap-feature-gates.py | Feature gate changes (informational). **Z-stream behavior**: When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences. | No |
-| **7** | gap-versions-channels.py | Version availability across Cincinnati channels (candidate/fast/stable), AWS/GCP marketplace availability (via OCM API), upgrade path existence, accepted-vs-channel comparison, cross-source consistency (informational). | No |
-| **8** | gap-ocm-version-gate.py | OCM version gate existence, configurations, and metadata for target OCP versions (compared against baseline version gates). Exits 0 on validation findings; fallback gracefully if OCM offline token / CLI is absent. | No |
+| **6** | gap-versions-channels.py | Version availability across Cincinnati channels (candidate/fast/stable), AWS/GCP marketplace availability (via OCM API), upgrade path existence, accepted-vs-channel comparison, cross-source consistency. | Yes |
+| **7** | gap-ocm-version-gate.py | OCM version gate existence, configurations, and metadata for target OCP versions (compared against baseline version gates). Fallback gracefully if OCM offline token / CLI is absent. | Yes |
+| **8** | gap-feature-gates.py | Feature gate changes (Info only, always executed last). **Z-stream behavior**: When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences. | No |
 
+**Standalone (not in CI pipeline):**
+
+| Script | Purpose |
+|--------|---------|
+| scripts/prod/gap-ga-validation.py | ROSA Production GA Readiness validation — checks channel availability, ROSA CLI compatibility, AWS/GCP marketplace enablement, version gates, upgrade paths, CI job status, SOP/runbook updates, GCP WIF template compatibility. Run manually by SREs before GA releases. See [docs/ga-readiness-validation.md](docs/ga-readiness-validation.md). |
 
 **Expected baseline**: For target X.Y, baseline is X.(Y-1). Example: 4.22 expects 4.21 baseline.
 

@@ -75,7 +75,7 @@ jq '.upgrade_paths.sample_paths' reports/gap-analysis-versions-channels_*.json
 [INFO] Baseline version: 4.21.18 (minor: 4.21)
 [INFO] Target version: 4.22.0-rc.5 (minor: 4.22)
 
-CHECK #7: Versions & Channels Analysis
+CHECK #6: Versions & Channels Analysis
 
 Baseline 4.21.18 channel status:
   ✓ candidate-4.21

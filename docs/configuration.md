@@ -26,11 +26,13 @@ All Python scripts support:
 ## Environment Variables
 
 ```bash
-BASE_VERSION=<version>    # Override baseline (must be used with TARGET_VERSION)
-TARGET_VERSION=<version>  # Override target (must be used with BASE_VERSION)
-                          # Supports special values: NIGHTLY, CANDIDATE
-OPENSHIFT_VERSION=<version> # Single version (auto-resolves baseline and target)
-REPORT_DIR=<path>         # Report directory
+BASE_VERSION=<version>       # Override baseline (must be used with TARGET_VERSION)
+TARGET_VERSION=<version>     # Override target (must be used with BASE_VERSION)
+                             # Supports special values: NIGHTLY, CANDIDATE
+OPENSHIFT_VERSION=<version>  # Single version (auto-resolves baseline and target)
+REPORT_DIR=<path>            # Report directory
+OCM_TOKEN=<token>            # OCM Offline Token used to query live OCM API endpoints
+                             # If unset, OCM checks will fall back to safe dry-run mode
 ```
 
 **Note:** For gap-all.sh, `BASE_VERSION` and `TARGET_VERSION` must be used together, or use `OPENSHIFT_VERSION` for single-version input.

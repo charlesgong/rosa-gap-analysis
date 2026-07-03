@@ -255,7 +255,7 @@ def main():
     target_minor = extract_minor_version(target_full)
 
     log_info("=========================================")
-    log_info("  CHECK #8: OCM Version Gate Analysis")
+    log_info("  CHECK #7: OCM Version Gate Analysis")
     log_info("=========================================")
     log_info(f"Baseline full version: {baseline_full} ({baseline_minor})")
     log_info(f"Target full version:   {target_full} ({target_minor})")
@@ -342,7 +342,7 @@ def main():
     log_success("=" * 60)
     log_success(f"✓ VALIDATION {validation_status} - OCM Version Gates Complete")
     log_success("=" * 60)
-    log_success(f"\nCHECK #8: OCM Version Gate Analysis [{validation_status}]")
+    log_success(f"\nCHECK #7: OCM Version Gate Analysis [{validation_status}]")
 
     sys.exit(0)
 

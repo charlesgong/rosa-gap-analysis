@@ -32,17 +32,16 @@ def generate_json_report(data: Dict[str, Any], output_file: str = None) -> str:
 
 
 def generate_status_report(check_number: int, check_name: str, status: str,
-                          details: Dict[str, Any], report_dir: str, add_timestamp: bool = True) -> None:
+                          details: Dict[str, Any], report_dir: str) -> None:
     """
     Generate a structured status file for gap-all.sh to consume.
 
     Args:
-        check_number: Numeric check identifier (1-6)
+        check_number: Numeric check identifier (1-8)
         check_name: Human-readable check name
         status: PASS, FAIL, WARNING, ERROR, SKIP
         details: Dictionary containing check-specific details
         report_dir: Directory to write status file
-        add_timestamp: Always True, timestamp is always added to filename
     """
     status_data = {
         "check_number": check_number,
@@ -75,6 +74,8 @@ def generate_html_report(data: Dict[str, Any], output_file: str = None) -> str:
         template = jinja_env.get_template('ocp-gate-ack.html.j2')
     elif 'Version Channel' in report_type:
         template = jinja_env.get_template('versions-channels.html.j2')
+    elif 'GA Readiness' in report_type or 'GA Validation' in report_type:
+        template = jinja_env.get_template('ga-validation.html.j2')
     elif 'OCM Version Gate' in report_type:
         template = jinja_env.get_template('ocm-version-gate.html.j2')
     elif 'Full Gap Analysis' in report_type:

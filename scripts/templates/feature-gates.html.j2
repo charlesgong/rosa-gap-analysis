@@ -157,19 +157,15 @@
             <table>
                 <thead>
                     <tr>
+                        <th style="width: 5%;">#</th>
                         <th>Feature Gate</th>
-                        <th>Enabled In</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for gate in default_hypershift_gates|sort(attribute='feature_gate') %}
+                    {% for gate in default_hypershift_gates %}
                     <tr>
-                        <td><code>{{ gate.feature_gate }}</code></td>
-                        <td>
-                            {% for enabled in gate.enabled %}
-                                <span style="background-color: #4caf50; color: white; padding: 3px 8px; border-radius: 3px; margin-right: 5px; font-size: 0.85em;">{{ enabled }}</span>
-                            {% endfor %}
-                        </td>
+                        <td style="color: #6c757d;">{{ loop.index }}</td>
+                        <td><code>{{ gate }}</code></td>
                     </tr>
                     {% endfor %}
                 </tbody>

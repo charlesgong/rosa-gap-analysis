@@ -11,10 +11,12 @@ from datetime import datetime
 from pathlib import Path
 # Add lib directory to path
 sys.path.insert(0, str(Path(__file__).parent / 'lib'))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from common import log_info, log_success, log_error, log_warning, check_command, is_pre_ga_version
 from openshift_releases import resolve_openshift_version, extract_minor_version
 from reporters import generate_html_report, generate_json_report, generate_status_report
+import shutil
 from ack_validation import (
     fetch_yaml_from_url,
     calculate_expected_baseline,
@@ -22,6 +24,11 @@ from ack_validation import (
     validate_cloudcredential_yaml,
     validate_wif_resources
 )
+
+
+import importlib
+_gap_marketplace = importlib.import_module("gap-marketplace")
+check_gcp_marketplace_enablement = _gap_marketplace.check_gcp_marketplace_enablement
 
 
 def validate_wif_acknowledgment(baseline, target, added_actions=None):
@@ -61,6 +68,7 @@ def validate_wif_acknowledgment(baseline, target, added_actions=None):
         'valid': resources_result['valid'],
         'errors': resources_result['errors'],
         'vanilla_yaml_exists': resources_result.get('file_data') is not None,
+        'file_count': 1 if resources_result.get('file_data') is not None else 0,
         'roles_with_changes': {},
         'missing_actions': resources_result.get('missing_actions', [])
     }
@@ -449,6 +457,90 @@ Exit Codes:
         log_info("Dry-run mode enabled - exiting without performing analysis")
         sys.exit(0)
 
+    # GCP WIF was only introduced in OpenShift 4.16
+    try:
+        target_minor_val = float(extract_minor_version(target))
+    except Exception:
+        target_minor_val = 0.0
+
+    if target_minor_val > 0.0 and target_minor_val < 4.16:
+        log_warning(f"GCP WIF was introduced in OpenShift 4.16. Target version {target} does not support GCP WIF.")
+        log_info("Skipping GCP WIF analysis and generating dummy report.")
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_data = {
+            'type': 'GCP WIF Policy Gap Analysis',
+            'baseline': baseline,
+            'target': target,
+            'timestamp': datetime.now().isoformat(),
+            'validation_result': 'PASS',
+            'validation_checked': False,
+            'validation_details': {
+                'valid': True,
+                'check_1_resources': {
+                    'status': 'PASS',
+                    'errors': [],
+                    'roles_with_changes': {},
+                    'file_count': 0
+                },
+                'check_2_admin_ack': {
+                    'status': 'PASS',
+                    'errors': [],
+                    'expected_baseline': '',
+                    'actual_baseline': ''
+                }
+            },
+            'gcp_marketplace': {
+                'status': 'PASS',
+                'message': f"GCP WIF is not supported or active for OpenShift versions below 4.16 (target version is {target}).",
+                'channels': {}
+            },
+            'comparison': {
+                'actions': {
+                    'target_only': [],
+                    'baseline_only': []
+                },
+                'file_changes': [],
+                'file_changes_count': 0
+            },
+            'summary': {
+                'added': 0,
+                'removed': 0,
+                'total_changes': 0
+            }
+        }
+        
+        report_dir = args.report_dir
+        os.makedirs(report_dir, exist_ok=True)
+        json_file = os.path.join(report_dir, f"gap-analysis-gcp-wif_{baseline}_to_{target}_{timestamp}.json")
+        generate_json_report(report_data, json_file)
+        log_info(f"JSON report generated: {json_file}")
+
+        # Generate status report for gap-all.sh
+        generate_status_report(
+            check_number=2,
+            check_name="GCP WIF Template Gap",
+            status="SKIP",
+            details={
+                "differences_count": 0,
+                "added_count": 0,
+                "removed_count": 0,
+                "validation_passed": True,
+                "validation_checked": False,
+                "message": f"GCP WIF is not supported below OpenShift 4.16 (target: {target})"
+            },
+            report_dir=report_dir,
+        )
+
+        if os.environ.get('GAP_FULL_REPORT'):
+            log_info("Skipping HTML reports (full report will be generated)")
+        else:
+            html_file = os.path.join(report_dir, f"gap-analysis-gcp-wif_{baseline}_to_{target}_{timestamp}.html")
+            generate_html_report(report_data, html_file)
+            log_info(f"HTML report generated: {html_file}")
+            
+        sys.exit(0)
+
     # Check prerequisites
     check_command('oc')
     check_command('jq')
@@ -510,6 +602,10 @@ Exit Codes:
     mcc_wif_url = f"https://github.com/openshift/managed-cluster-config/tree/master/resources/wif/{target_minor}"
     mcc_ack_url = f"https://github.com/openshift/managed-cluster-config/tree/master/deploy/osd-cluster-acks/wif/{target_minor}"
 
+    # Check GCP Marketplace Enablement
+    log_info("\nChecking GCP Marketplace Enablement...")
+    gcp_marketplace_result = check_gcp_marketplace_enablement(target)
+
     # For pre-GA versions, missing MCC scaffolding is expected
     pre_ga_override = False
     if not validation_details['valid'] and is_pre_ga_version(target):
@@ -517,7 +613,7 @@ Exit Codes:
         log_warning(f"MCC scaffolding not yet created for pre-GA version {target}, skipping validation")
         validation_details['valid'] = True
 
-    if validation_details['valid']:
+    if validation_details['valid'] and gcp_marketplace_result['status'] != 'FAIL':
         validation_result = 'PASS'
         log_success("=" * 60)
         if pre_ga_override:
@@ -539,12 +635,24 @@ Exit Codes:
             log_success(f"  Location: {mcc_ack_url}")
             log_success(f"  ✓ config.yaml: baseline version {check_2['actual_baseline']} matches expected")
             log_success(f"  ✓ CloudCredential: upgrade version validated")
+        
+        # Log GCP Marketplace success / warn
+        if gcp_marketplace_result['status'] == 'PASS':
+            log_success(f"\nGCP Marketplace Enablement [PASS]")
+            log_success(f"  ✓ {gcp_marketplace_result['message']}")
+        elif gcp_marketplace_result['status'] == 'WARN':
+            log_warning(f"\nGCP Marketplace Enablement [WARN]")
+            log_warning(f"  ⚠ {gcp_marketplace_result['message']}")
         log_success("")
     else:
         validation_result = 'FAIL'
         log_error("=" * 60)
         log_error("✗ VALIDATION FAILED")
         log_error("=" * 60)
+
+        if gcp_marketplace_result['status'] == 'FAIL':
+            log_error(f"\nGCP Marketplace Enablement [FAIL]")
+            log_error(f"  - {gcp_marketplace_result['message']}")
 
         if check_1['status'] == 'FAIL':
             log_error(f"\nCHECK #3: GCP WIF Resources Validation [FAIL]")
@@ -570,6 +678,7 @@ Exit Codes:
         'validation_result': validation_result,
         'validation_checked': validation_checked,
         'validation_details': validation_details,
+        'gcp_marketplace': gcp_marketplace_result,
         'comparison': comparison,
         'summary': {
             'added': added_count,
@@ -622,7 +731,6 @@ Exit Codes:
         status=validation_result,
         details=status_details,
         report_dir=report_dir,
-        add_timestamp=True
     )
 
     # Exit based on validation result

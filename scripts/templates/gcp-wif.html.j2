@@ -91,6 +91,32 @@
             border-radius: 3px;
             font-family: 'Courier New', monospace;
         }
+        .alert {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .alert.error {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        .alert.success {
+            background-color: #e8f5e9;
+            border-color: #28a745;
+            color: #155724;
+        }
+        .alert.warning {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        .alert.info {
+            background-color: #d1ecf1;
+            border-color: #17a2b8;
+            color: #0c5460;
+        }
         .footer {
             margin-top: 40px;
             padding-top: 20px;
@@ -110,6 +136,26 @@
             <p><strong>Baseline Version:</strong> <code>{{ baseline }}</code></p>
             <p><strong>Target Version:</strong> <code>{{ target }}</code></p>
         </div>
+
+        <h2>GCP Marketplace Enablement</h2>
+        {% if gcp_marketplace %}
+        <div class="alert {% if gcp_marketplace.status == 'PASS' %}success{% elif gcp_marketplace.status == 'WARN' %}warning{% else %}error{% endif %}">
+            <h3>{% if gcp_marketplace.status == 'PASS' %}✅{% elif gcp_marketplace.status == 'WARN' %}⚠️{% else %}❌{% endif %} GCP Marketplace Status</h3>
+            <p>{{ gcp_marketplace.message }}</p>
+
+            {% if gcp_marketplace.channels %}
+            <h4>Channel Breakdown:</h4>
+            <ul>
+                {% for chan, results in gcp_marketplace.channels.items() %}
+                <li style="margin-bottom: 15px; list-style-type: none; background-color: rgba(255,255,255,0.6); padding: 10px; border-radius: 4px;">
+                    <strong>Channel Group:</strong> <code>{{ chan }}</code><br/>
+                    <strong>GCP Marketplace:</strong> {% if results.gcp_marketplace %}<span class="added">✅ FOUND ({{ results.gcp_marketplace_output }})</span>{% else %}<span class="removed">❌ MISSING</span>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endif %}
 
         <h2>Summary</h2>
 

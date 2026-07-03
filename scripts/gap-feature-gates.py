@@ -201,8 +201,8 @@ def print_zstream_summary(default_hypershift_gates, total_hypershift_gates, vers
     if verbose:
         log_info("")
         log_info(f"Default:Hypershift feature gates in {version}:")
-        for gate in sorted(default_hypershift_gates, key=lambda g: g['feature_gate']):
-            log_info(f"  ✓ {gate['feature_gate']}")
+        for gate in default_hypershift_gates:
+            log_info(f"  ✓ {gate}")
 
 
 def main():
@@ -302,14 +302,10 @@ Exit Codes:
         target_data = fetch_feature_gates(target)
 
         # Filter to Default:Hypershift gates
-        default_hypershift_gates = [
-            {
-                'feature_gate': gate['feature_gate'],
-                'enabled': gate.get('enabled', [])
-            }
-            for gate in target_data
-            if has_default_hypershift(gate.get('enabled', []))
-        ]
+        default_hypershift_gates = sorted(
+            [gate['feature_gate'] for gate in target_data
+             if has_default_hypershift(gate.get('enabled', []))]
+        )
 
         # Count all Hypershift-relevant gates
         total_hypershift_gates = sum(
@@ -317,8 +313,8 @@ Exit Codes:
             if is_hypershift_relevant(gate.get('enabled', []))
         )
 
-        # Print results with CHECK #6
-        log_info("\nCHECK #6: Feature Gates Analysis (Z-stream)")
+        # Print results with CHECK #8
+        log_info("\nCHECK #8: Feature Gates Analysis (Z-stream)")
         print_zstream_summary(default_hypershift_gates, total_hypershift_gates, target, args.verbose)
 
     else:
@@ -329,12 +325,23 @@ Exit Codes:
         baseline_data = fetch_feature_gates(baseline)
         target_data = fetch_feature_gates(target)
 
+        # Collect all Default:Hypershift gates from target
+        target_dict = {g['feature_gate']: g for g in target_data}
+        default_hypershift_gates = sorted(
+            [name for name, gate in target_dict.items()
+             if has_default_hypershift(gate.get('enabled', []))],
+        )
+        total_hypershift_gates = sum(
+            1 for gate in target_data
+            if is_hypershift_relevant(gate.get('enabled', []))
+        )
+
         # Compare
         log_info("Comparing feature gates...")
         comparison = compare_feature_gates(baseline_data, target_data)
 
-        # Print results with CHECK #6
-        log_info("\nCHECK #6: Feature Gates Analysis")
+        # Print results with CHECK #8
+        log_info("\nCHECK #8: Feature Gates Analysis")
         print_comparison(comparison, baseline, target, args.verbose)
 
     # Generate reports
@@ -381,6 +388,8 @@ Exit Codes:
             'timestamp': datetime.now().isoformat(),
             'validation_result': validation_result,
             'comparison': comparison,
+            'default_hypershift_gates': default_hypershift_gates,
+            'total_hypershift_gates': total_hypershift_gates,
             'summary': {
                 'added': added_count,
                 'removed': removed_count,
@@ -411,7 +420,7 @@ Exit Codes:
     log_success("=" * 60)
     log_success("✓ VALIDATION PASSED - Feature Gates (Informational)")
     log_success("=" * 60)
-    log_success(f"\nCHECK #6: Feature Gates Analysis [PASS - Informational]")
+    log_success(f"\nCHECK #8: Feature Gates Analysis [PASS - Info]")
     log_success(f"  Data Source: Sippy API")
     log_success(f"  URL: {sippy_url}")
 
@@ -460,12 +469,11 @@ Exit Codes:
     }
 
     generate_status_report(
-        check_number=4,
+        check_number=8,
         check_name="Feature Gates Gap",
         status="PASS",
         details=status_details,
         report_dir=args.report_dir,
-        add_timestamp=True
     )
 
     sys.exit(0)
