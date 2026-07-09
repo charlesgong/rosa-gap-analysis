@@ -1,13 +1,14 @@
 ---
 name: versions-channels-gap
 description: >
-  Analyze OCP version availability across Cincinnati release channels.
+  Analyze OCP version availability across OCM release channels.
   Validates channel promotion status, upgrade paths, and cross-source consistency
-  between Sippy, accepted streams, and Cincinnati. Always exits 0 on successful
+  between Sippy, accepted streams, and OCM. Always exits 0 on successful
   execution (informational only). Generates HTML and JSON reports.
 compatibility:
   required_tools:
     - python3
+    - ocm
 ---
 
 # Versions & Channels Gap Analysis
@@ -19,14 +20,14 @@ Analyze OCP version availability across release channels and validate upgrade pa
 - Checking if a target version is available in the expected release channel
 - Verifying upgrade paths exist between baseline and target versions
 - Identifying versions accepted in CI but not yet promoted to channels
-- Cross-checking version data across Sippy, accepted streams, and Cincinnati
+- Cross-checking version data across Sippy, accepted streams, and OCM
 - Pre-upgrade channel readiness assessment
 
 ## What This Analyzes
 
-1. **Channel Availability** - Which Cincinnati channels (candidate/fast/stable) contain the baseline and target versions
+1. **Channel Availability** - Which OCM channels (candidate/fast/stable) contain the baseline and target versions
 2. **Accepted vs Channels** - Versions that passed CI acceptance but haven't been promoted to any channel yet
-3. **Upgrade Paths** - Whether valid upgrade edges exist in Cincinnati from baseline to target
+3. **Upgrade Paths** - Whether valid upgrade edges exist in the OCM upgrade graph from baseline to target
 4. **Cross-Source Consistency** - GA dates from Sippy vs accepted streams data
 
 ## Workflow
@@ -49,7 +50,7 @@ python3 ./scripts/gap-versions-channels.py --version 4.22 --dry-run
 
 ### Step 2: Interpret Results
 
-The script queries Cincinnati for each channel (candidate/fast/stable) for both baseline and target minor versions, then compares with accepted streams data.
+The script queries OCM for each channel (candidate/fast/stable) for both baseline and target minor versions, then compares with accepted streams data.
 
 **Key findings to look for:**
 - Baseline not in stable channel (unusual for GA versions)
@@ -99,11 +100,11 @@ Exit code: `0` (always, informational only)
 
 ## Data Sources
 
-- **Cincinnati API**: `https://api.openshift.com/api/upgrades_info/v1/graph?channel={channel}&arch=amd64`
+- **OCM CLI**: `ocm get /api/clusters_mgmt/v1/versions` (channel availability) and `ocm get /api/upgrades_info/v1/graph` (upgrade paths) — requires `ocm login --token=<token>`
 - **Accepted Streams**: `https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestreams/accepted`
 - **Sippy API**: `https://sippy.dptools.openshift.org/api/releases`
 
-All APIs are public and require no authentication.
+OCM CLI requires authentication. Accepted Streams and Sippy APIs are public.
 
 ## Example Interaction
 

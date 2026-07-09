@@ -534,8 +534,8 @@
                     <tr>
                         <th>Check</th>
                         <th>Status</th>
-                        <th style="text-align: center;">Unique Added</th>
-                        <th style="text-align: center;">Unique Removed</th>
+                        <th style="text-align: center;">New / Added</th>
+                        <th style="text-align: center;">Removed / Deprecated</th>
                         <th>Details</th>
                     </tr>
                 </thead>
@@ -1086,49 +1086,132 @@
             </table>
 
             {% if versions_channels.marketplace is defined and versions_channels.marketplace.available %}
-            <h3>Marketplace Availability</h3>
+            {% set mp = versions_channels.marketplace %}
+            {% set mp_versions = mp.aws.target_minor_versions %}
+
+            {# ─── Build per-channel summary ─── #}
+            {% set ns = namespace(channels={}) %}
+            {% for v in mp_versions %}
+            {% set ch = v.channel_group %}
+            {% if ch not in ns.channels %}
+            {% set _ = ns.channels.update({ch: {'rosa_classic': 0, 'rosa_hcp': 0, 'gcp': 0, 'total': 0, 'latest': v.version}}) %}
+            {% endif %}
+            {% set _ = ns.channels[ch].update({'total': ns.channels[ch].total + 1}) %}
+            {% if v.version > ns.channels[ch].latest %}
+            {% set _ = ns.channels[ch].update({'latest': v.version}) %}
+            {% endif %}
+            {% if v.rosa_enabled %}
+            {% set _ = ns.channels[ch].update({'rosa_classic': ns.channels[ch].rosa_classic + 1}) %}
+            {% endif %}
+            {% if v.hosted_control_plane_enabled %}
+            {% set _ = ns.channels[ch].update({'rosa_hcp': ns.channels[ch].rosa_hcp + 1}) %}
+            {% endif %}
+            {% if v.gcp_marketplace_enabled %}
+            {% set _ = ns.channels[ch].update({'gcp': ns.channels[ch].gcp + 1}) %}
+            {% endif %}
+            {% endfor %}
+
+            {# ─── Build per-channel latest version for ROSA Classic and HCP (strip channel suffix) ─── #}
+            {% set ns2 = namespace(classic={}, hcp={}) %}
+            {% for v in mp_versions %}
+            {% set ch = v.channel_group %}
+            {% set clean_ver = v.version.replace('-' ~ ch, '') %}
+            {% if v.rosa_enabled %}
+            {% if ch not in ns2.classic or clean_ver > ns2.classic[ch] %}
+            {% set _ = ns2.classic.update({ch: clean_ver}) %}
+            {% endif %}
+            {% endif %}
+            {% if v.hosted_control_plane_enabled %}
+            {% if ch not in ns2.hcp or clean_ver > ns2.hcp[ch] %}
+            {% set _ = ns2.hcp.update({ch: clean_ver}) %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+
+            <h3>AWS Marketplace Enablement</h3>
             <table>
                 <thead>
-                    <tr><th>Version</th><th>AWS (ROSA)</th><th>GCP Marketplace</th><th>Channel Group</th></tr>
+                    <tr>
+                        <th>Channel</th>
+                        <th style="text-align: center;">ROSA Classic</th>
+                        <th style="text-align: center;">ROSA HCP</th>
+                    </tr>
                 </thead>
                 <tbody>
+                    {% for ch in ['stable', 'fast', 'candidate'] %}
+                    {% if ch in ns.channels %}
+                    {% set c = ns.channels[ch] %}
                     <tr>
-                        <td><strong>Baseline:</strong> {{ versions_channels.baseline }}</td>
-                        <td>{% if versions_channels.marketplace.aws.baseline.rosa_enabled is none %}—{% elif versions_channels.marketplace.aws.baseline.rosa_enabled %}<span class="added">Available</span>{% else %}<span class="removed">Not available</span>{% endif %}</td>
-                        <td>{% if versions_channels.marketplace.gcp.baseline.gcp_marketplace_enabled is none %}—{% elif versions_channels.marketplace.gcp.baseline.gcp_marketplace_enabled %}<span class="added">Available</span>{% else %}<span class="removed">Not available</span>{% endif %}</td>
-                        <td>{{ versions_channels.marketplace.aws.baseline.channel_group or '-' }}</td>
+                        <td><strong>{{ ch }}</strong></td>
+                        <td style="text-align: center;">{% if ch in ns2.classic %}<span class="added">✓</span> <span style="font-family: monospace; font-size: 0.9em;">{{ ns2.classic[ch] }}</span>{% else %}<span class="removed">✗</span> —{% endif %}</td>
+                        <td style="text-align: center;">{% if ch in ns2.hcp %}<span class="added">✓</span> <span style="font-family: monospace; font-size: 0.9em;">{{ ns2.hcp[ch] }}</span>{% else %}<span class="removed">✗</span> —{% endif %}</td>
                     </tr>
-                    <tr>
-                        <td><strong>Target:</strong> {{ versions_channels.target }}</td>
-                        <td>{% if versions_channels.marketplace.aws.target.rosa_enabled is none %}—{% elif versions_channels.marketplace.aws.target.rosa_enabled %}<span class="added">Available</span>{% else %}<span class="removed">Not available</span>{% endif %}</td>
-                        <td>{% if versions_channels.marketplace.gcp.target.gcp_marketplace_enabled is none %}—{% elif versions_channels.marketplace.gcp.target.gcp_marketplace_enabled %}<span class="added">Available</span>{% else %}<span class="removed">Not available</span>{% endif %}</td>
-                        <td>{{ versions_channels.marketplace.aws.target.channel_group or '-' }}</td>
-                    </tr>
+                    {% endif %}
+                    {% endfor %}
                 </tbody>
             </table>
-            {% elif versions_channels.marketplace is defined and not versions_channels.marketplace.available %}
-            <h3>Marketplace Availability</h3>
-            <p><em>Skipped — OCM not authenticated</em></p>
-            {% endif %}
 
-            {% if versions_channels.upgrade_paths.sample_paths %}
+            {# ─── Build per-channel latest version for GCP (strip channel suffix from version ID) ─── #}
+            {% set ns3 = namespace(gcp={}) %}
+            {% for v in mp_versions %}
+            {% set ch = v.channel_group %}
+            {% if v.gcp_marketplace_enabled %}
+            {% set clean_ver = v.version.replace('-' ~ ch, '') %}
+            {% if ch not in ns3.gcp or clean_ver > ns3.gcp[ch] %}
+            {% set _ = ns3.gcp.update({ch: clean_ver}) %}
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+
+            <h3>GCP Marketplace Enablement</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Channel</th>
+                        <th style="text-align: center;">GCP Marketplace</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ch in ['stable', 'fast', 'candidate'] %}
+                    {% if ch in ns.channels %}
+                    <tr>
+                        <td><strong>{{ ch }}</strong></td>
+                        <td style="text-align: center;">{% if ch in ns3.gcp %}<span class="added">✓</span> <span style="font-family: monospace; font-size: 0.9em;">{{ ns3.gcp[ch] }}</span>{% else %}<span class="removed">✗</span> —{% endif %}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+
             <details>
-                <summary>Sample Upgrade Paths ({{ versions_channels.upgrade_paths.sample_paths|length }} of {{ versions_channels.summary.total_upgrade_paths }})</summary>
+                <summary>Baseline / Target Version Details</summary>
                 <div class="content-wrapper">
                 <table>
-                    <thead><tr><th>From</th><th></th><th>To</th></tr></thead>
+                    <thead>
+                        <tr><th>Version</th><th style="text-align: center;">ROSA Classic</th><th style="text-align: center;">ROSA HCP</th><th style="text-align: center;">GCP Marketplace</th><th>Channel</th></tr>
+                    </thead>
                     <tbody>
-                        {% for path in versions_channels.upgrade_paths.sample_paths %}
                         <tr>
-                            <td>{{ path['from'] }}</td>
-                            <td style="text-align: center;">→</td>
-                            <td>{{ path.to }}</td>
+                            <td><strong>Baseline:</strong> {{ versions_channels.baseline }}</td>
+                            <td style="text-align: center;">{% if mp.aws.baseline.rosa_enabled is none %}—{% elif mp.aws.baseline.rosa_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            <td style="text-align: center;">—</td>
+                            <td style="text-align: center;">{% if mp.gcp.baseline.gcp_marketplace_enabled is none %}—{% elif mp.gcp.baseline.gcp_marketplace_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            <td>{{ mp.aws.baseline.channel_group or '-' }}</td>
                         </tr>
-                        {% endfor %}
+                        <tr>
+                            <td><strong>Target:</strong> {{ versions_channels.target }}</td>
+                            <td style="text-align: center;">{% if mp.aws.target.rosa_enabled is none %}—{% elif mp.aws.target.rosa_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            <td style="text-align: center;">—</td>
+                            <td style="text-align: center;">{% if mp.gcp.target.gcp_marketplace_enabled is none %}—{% elif mp.gcp.target.gcp_marketplace_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            <td>{{ mp.aws.target.channel_group or '-' }}</td>
+                        </tr>
                     </tbody>
                 </table>
                 </div>
             </details>
+            {% elif versions_channels.marketplace is defined and not versions_channels.marketplace.available %}
+            <h3>Marketplace Availability</h3>
+            <p><em>Skipped — OCM not authenticated</em></p>
             {% endif %}
 
             {% if versions_channels.cross_source.observations %}

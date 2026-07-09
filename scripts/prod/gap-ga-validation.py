@@ -212,7 +212,7 @@ class GAReadinessValidator:
             self.log_status(name, "FAIL", f"Failed checking version gates: {e}")
 
     def check_upgrade_paths(self):
-        """Verify upgrade paths from supported versions are available via Cincinnati."""
+        """Verify upgrade paths from supported versions are available via OCM CLI."""
         name = "Upgrade Paths"
 
         try:

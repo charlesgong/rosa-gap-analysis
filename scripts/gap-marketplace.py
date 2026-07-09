@@ -147,9 +147,11 @@ def check_gcp_marketplace_enablement(target_version):
         for line in proc_gcp.stdout.splitlines():
             parts = line.strip().split()
             if parts and (parts[0] == target_version or parts[0].startswith(major_minor)):
+                clean_version = parts[0]
+                if clean_version.endswith(f"-{chan}"):
+                    clean_version = clean_version[: -len(f"-{chan}")]
                 cli_results[chan]["gcp_marketplace"] = True
-                cli_results[chan]["gcp_marketplace_output"] = parts[0]
-                break
+                cli_results[chan]["gcp_marketplace_output"] = clean_version
 
     all_passed = True
     for chan in channels:

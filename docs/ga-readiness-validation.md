@@ -21,7 +21,7 @@ Automates the pre-GA readiness checklist to ensure all production prerequisites 
 | **AWS Marketplace Enablement** | Verifies AWS marketplace enablement for ROSA Classic and ROSA HCP across channels (stable, fast, candidate, eus) |
 | **GCP Marketplace Enablement** | Verifies GCP marketplace enablement across channels (stable, fast, candidate, eus) |
 | **Version Gates** | Checks OCM version gates are properly configured for the target release |
-| **Upgrade Paths** | Confirms upgrade paths from supported versions are available via Cincinnati graph API |
+| **Upgrade Paths** | Confirms upgrade paths from supported versions are available via OCM CLI |
 | **CI Job Status** | Checks that gap analysis Prow CI jobs are passing for the target version |
 | **SOP & Runbooks Update Status** | Validates that Gap Analysis SOPs and runbooks are updated for the target version |
 | **GCP WIF Template Compatibility** | Checks that GCP WIF template configurations in OCM support the target version |
@@ -31,7 +31,7 @@ Automates the pre-GA readiness checklist to ensure all production prerequisites 
 - `ocm` CLI (logged in) — for channel availability, version gates, GCP WIF, and GCP marketplace checks
 - `rosa` CLI (logged in) — for ROSA CLI compatibility and AWS marketplace checks
 - `python3` with `PyYAML` and `Jinja2`
-- Network access to OCM API, Cincinnati API, Prow CI, and GitHub
+- Network access to OCM API, Prow CI, and GitHub
 
 ## Usage
 
@@ -104,7 +104,7 @@ The script generates two report files in the report directory:
 [SUCCESS] GCP Marketplace Enablement - Successfully verified GCP Marketplace enablement across channels.
 [INFO] Executing: Verify OCM version gates are configured for the target release...
 [SUCCESS] Version Gates - Found 1 version gate(s) for 4.22.
-[INFO] Executing: Verify upgrade paths from supported versions are available via Cincinnati...
+[INFO] Executing: Verify upgrade paths from supported versions are available via OCM CLI...
 [SUCCESS] Upgrade Paths - Upgrade paths available in 3/3 channels.
 [INFO] Executing: Check gap analysis Prow CI job status for the target version...
 [SUCCESS] CI Job Status - Latest Prow job passed.

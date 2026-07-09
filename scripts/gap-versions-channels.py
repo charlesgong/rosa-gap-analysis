@@ -20,30 +20,168 @@ from openshift_releases import resolve_openshift_version, extract_minor_version
 from reporters import generate_html_report, generate_json_report, generate_status_report
 
 
-CINCINNATI_API = "https://api.openshift.com/api/upgrades_info/v1/graph"
 ACCEPTED_STREAMS_API = "https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestreams/accepted"
 SIPPY_API = "https://sippy.dptools.openshift.org/api/releases"
 
 CHANNELS = ['candidate', 'fast', 'stable']
 
 
-def fetch_cincinnati_channel(channel, arch="amd64"):
-    """Fetch version graph from Cincinnati for a specific channel.
+def _fetch_channel_via_ocm(minor_version, channel_group):
+    """Fetch versions from OCM CLI for a minor version and channel group.
 
-    Returns (data, error) tuple. On failure, data is the empty fallback and
-    error is a descriptive string so callers can surface API issues.
+    Returns (versions_list, error) tuple.
     """
     try:
-        url = f"{CINCINNATI_API}?channel={channel}&arch={arch}"
-        req = Request(url, headers={
-            'User-Agent': 'gap-analysis-script',
-            'Accept': 'application/json'
-        })
-        with urlopen(req, timeout=30) as response:
-            return json.loads(response.read()), None
-    except (URLError, HTTPError, json.JSONDecodeError) as e:
-        log_warning(f"Failed to fetch Cincinnati channel {channel}: {e}")
-        return {'nodes': [], 'edges': []}, f"Cincinnati channel {channel}: {e}"
+        search = f"raw_id like '{minor_version}%' and channel_group='{channel_group}'"
+        result = subprocess.run(
+            ['ocm', 'get', '/api/clusters_mgmt/v1/versions',
+             '--parameter', f'search={search}',
+             '--parameter', 'size=200',
+             '--parameter', 'order=raw_id asc'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            return [], f"ocm versions query for {channel_group}-{minor_version}: {err_msg}"
+        data = json.loads(result.stdout)
+        items = data.get('items', [])
+        versions = sorted([v.get('raw_id', '') for v in items
+                           if v.get('raw_id', '').startswith(f"{minor_version}.")])
+        return versions, None
+    except FileNotFoundError:
+        return [], "ocm CLI not found"
+    except subprocess.TimeoutExpired:
+        return [], f"ocm versions query for {channel_group}-{minor_version}: timeout"
+    except json.JSONDecodeError as e:
+        return [], f"ocm versions query for {channel_group}-{minor_version}: {e}"
+
+
+def _fetch_channel_via_rosa(minor_version, channel_group):
+    """Fetch versions from ROSA CLI for a minor version and channel group.
+
+    Returns (versions_list, error) tuple. Parses text output from
+    'rosa list versions --channel-group <group>'.
+    """
+    try:
+        result = subprocess.run(
+            ['rosa', 'list', 'versions', '--channel-group', channel_group],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            return [], f"rosa versions query for {channel_group}-{minor_version}: {err_msg}"
+        versions = []
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if parts and re.match(r'^\d+\.\d+\.', parts[0]) and parts[0].startswith(f"{minor_version}."):
+                versions.append(parts[0])
+        return sorted(versions), None
+    except FileNotFoundError:
+        return [], "rosa CLI not found"
+    except subprocess.TimeoutExpired:
+        return [], f"rosa versions query for {channel_group}-{minor_version}: timeout"
+
+
+def fetch_ocm_channel_data(minor_version, channel_group):
+    """Fetch versions for a minor version and channel group via OCM or ROSA CLI.
+
+    Tries OCM CLI first (structured JSON). Falls back to ROSA CLI (text parsing)
+    if OCM is unavailable. Returns (versions_list, error) tuple.
+    """
+    if not re.match(r'^\d+\.\d+$', minor_version):
+        return [], f"Invalid minor version format: {minor_version}"
+    if not re.match(r'^[a-z]+$', channel_group):
+        return [], f"Invalid channel group format: {channel_group}"
+
+    versions, ocm_err = _fetch_channel_via_ocm(minor_version, channel_group)
+    if not ocm_err:
+        return versions, None
+
+    log_warning(f"OCM CLI failed ({ocm_err}), falling back to ROSA CLI")
+    versions, rosa_err = _fetch_channel_via_rosa(minor_version, channel_group)
+    if not rosa_err:
+        return versions, None
+
+    return [], f"{ocm_err}; rosa fallback also failed: {rosa_err}"
+
+
+def _fetch_upgrade_graph_via_rosa(channel_group, minor_version):
+    """Build upgrade graph from ROSA CLI 'rosa list versions' output.
+
+    Parses the AVAILABLE UPGRADES column to reconstruct upgrade edges.
+    Returns (data, error) tuple with the same {nodes, edges} structure.
+    """
+    try:
+        result = subprocess.run(
+            ['rosa', 'list', 'versions', '--channel-group', channel_group],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            return {'nodes': [], 'edges': []}, f"rosa upgrade graph for {channel_group}: {err_msg}"
+
+        version_set = set()
+        edge_pairs = []
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if not parts or not re.match(r'^\d+\.\d+\.', parts[0]):
+                continue
+            src = parts[0]
+            if not src.startswith(f"{minor_version}."):
+                continue
+            version_set.add(src)
+            upgrade_str = ' '.join(parts[2:]) if len(parts) > 2 else ''
+            if upgrade_str:
+                for target in upgrade_str.split(','):
+                    target = target.strip()
+                    if target:
+                        version_set.add(target)
+                        edge_pairs.append((src, target))
+
+        version_list = sorted(version_set)
+        idx = {v: i for i, v in enumerate(version_list)}
+        nodes = [{'version': v} for v in version_list]
+        edges = [[idx[src], idx[dst]] for src, dst in edge_pairs if src in idx and dst in idx]
+        return {'nodes': nodes, 'edges': edges}, None
+    except FileNotFoundError:
+        return {'nodes': [], 'edges': []}, "rosa CLI not found"
+    except subprocess.TimeoutExpired:
+        return {'nodes': [], 'edges': []}, f"rosa upgrade graph for {channel_group}: timeout"
+
+
+def fetch_ocm_upgrade_graph(channel, arch="amd64"):
+    """Fetch version upgrade graph via OCM CLI, with ROSA CLI fallback.
+
+    Tries OCM CLI first (full graph data). Falls back to ROSA CLI (parsed from
+    'rosa list versions' AVAILABLE UPGRADES column) if OCM is unavailable.
+    Returns (data, error) tuple with {nodes, edges} structure.
+    """
+    # Extract channel_group and minor_version from channel name (e.g., "candidate-4.22")
+    parts = channel.split('-', 1)
+    channel_group = parts[0] if len(parts) > 1 else 'stable'
+    minor_version = parts[1] if len(parts) > 1 else channel
+
+    try:
+        result = subprocess.run(
+            ['ocm', 'get', '/api/upgrades_info/v1/graph',
+             '--parameter', f'channel={channel}',
+             '--parameter', f'arch={arch}'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            log_warning(f"OCM upgrade graph failed for {channel} ({err_msg}), falling back to ROSA CLI")
+            return _fetch_upgrade_graph_via_rosa(channel_group, minor_version)
+        return json.loads(result.stdout), None
+    except FileNotFoundError:
+        log_warning("OCM CLI not found — trying ROSA CLI for upgrade graph")
+        return _fetch_upgrade_graph_via_rosa(channel_group, minor_version)
+    except subprocess.TimeoutExpired:
+        log_warning(f"OCM upgrade graph timed out for {channel}, falling back to ROSA CLI")
+        return _fetch_upgrade_graph_via_rosa(channel_group, minor_version)
+    except json.JSONDecodeError as e:
+        log_warning(f"Failed to parse OCM upgrade graph for {channel}: {e}, falling back to ROSA CLI")
+        return _fetch_upgrade_graph_via_rosa(channel_group, minor_version)
 
 
 def fetch_accepted_streams():
@@ -66,16 +204,6 @@ def fetch_sippy_releases():
     except (URLError, HTTPError, json.JSONDecodeError) as e:
         log_warning(f"Failed to fetch Sippy releases: {e}")
         return {}
-
-
-def get_versions_in_channel(channel_data, minor_version):
-    """Extract versions matching a minor version from Cincinnati channel data."""
-    versions = []
-    for node in channel_data.get('nodes', []):
-        version = node.get('version', '')
-        if version.startswith(f"{minor_version}."):
-            versions.append(version)
-    return sorted(versions, key=lambda v: v)
 
 
 def analyze_channel_availability(baseline_minor, target_minor, baseline_full, target_full):
@@ -102,13 +230,11 @@ def analyze_channel_availability(baseline_minor, target_minor, baseline_full, ta
 
     for minor in minors_to_check:
         for channel_type in CHANNELS:
-            channel_name = f"{channel_type}-{minor}"
-            log_info(f"Querying Cincinnati channel: {channel_name}")
-            channel_data, err = fetch_cincinnati_channel(channel_name)
+            log_info(f"Querying OCM versions: {channel_type}-{minor}")
+            versions, err = fetch_ocm_channel_data(minor, channel_type)
             if err:
                 result['api_errors'].append(err)
 
-            versions = get_versions_in_channel(channel_data, minor)
             channel_info = {
                 'available': len(versions) > 0,
                 'version_count': len(versions),
@@ -136,7 +262,7 @@ def analyze_channel_availability(baseline_minor, target_minor, baseline_full, ta
 
 
 def analyze_accepted_vs_channels(target_minor):
-    """Compare accepted streams with Cincinnati channel data."""
+    """Compare accepted streams with OCM channel data."""
     result = {
         'accepted_versions': [],
         'channel_versions': [],
@@ -160,17 +286,15 @@ def analyze_accepted_vs_channels(target_minor):
                 if v.startswith(f"{target_minor}."):
                     accepted.add(v)
 
-    # Collect versions from Cincinnati channels
+    # Collect versions from OCM channels
     channel_versions = set()
     for channel_type in CHANNELS:
-        channel_name = f"{channel_type}-{target_minor}"
-        channel_data, err = fetch_cincinnati_channel(channel_name)
+        versions, err = fetch_ocm_channel_data(target_minor, channel_type)
         if err:
             result['api_errors'].append(err)
-        for node in channel_data.get('nodes', []):
-            version = node.get('version', '')
-            if version.startswith(f"{target_minor}."):
-                channel_versions.add(version)
+        for v in versions:
+            if v.startswith(f"{target_minor}."):
+                channel_versions.add(v)
 
     result['accepted_versions'] = sorted(accepted)
     result['channel_versions'] = sorted(channel_versions)
@@ -203,13 +327,13 @@ def analyze_upgrade_paths(baseline_minor, target_minor, baseline_full, target_fu
         channel_name = f"candidate-{target_minor}"
 
     result['channel_queried'] = channel_name
-    log_info(f"Querying upgrade paths from Cincinnati channel: {channel_name}")
-    channel_data, err = fetch_cincinnati_channel(channel_name)
+    log_info(f"Querying upgrade paths via OCM: {channel_name}")
+    graph_data, err = fetch_ocm_upgrade_graph(channel_name)
     if err:
         result['api_errors'].append(err)
 
-    nodes = channel_data.get('nodes', [])
-    edges = channel_data.get('edges', [])
+    nodes = graph_data.get('nodes', [])
+    edges = graph_data.get('edges', [])
 
     if not nodes or not edges:
         return result
@@ -243,7 +367,7 @@ def analyze_upgrade_paths(baseline_minor, target_minor, baseline_full, target_fu
 
 
 def analyze_cross_source_consistency(baseline_minor, target_minor):
-    """Check consistency across Sippy, accepted streams, and Cincinnati."""
+    """Check consistency across Sippy, accepted streams, and OCM channel data."""
     result = {
         'baseline_ga_date': None,
         'target_ga_date': None,
@@ -631,7 +755,7 @@ Exit Codes:
         api_errors.extend(analysis.get('api_errors', []))
 
     if api_errors:
-        log_warning(f"{len(api_errors)} Cincinnati API call(s) failed — results may be incomplete:")
+        log_warning(f"{len(api_errors)} OCM API call(s) failed — results may be incomplete:")
         for err in api_errors:
             log_warning(f"  - {err}")
 
@@ -693,7 +817,7 @@ Exit Codes:
     log_success("✓ VALIDATION PASSED - Versions & Channels (Informational)")
     log_success("=" * 60)
     log_success(f"\nCHECK #6: Versions & Channels Analysis [PASS]")
-    log_success(f"  Data Sources: Cincinnati API, Accepted Streams, Sippy")
+    log_success(f"  Data Sources: OCM CLI, Accepted Streams, Sippy")
 
     if is_z_stream:
         log_success(f"  Comparison Type: Z-stream ({baseline_full} → {target_full})")

@@ -185,14 +185,13 @@
         {# ─── AWS Marketplace ─── #}
         {% if check_data.channels is defined and check_data.channels and check_data.channels.values()|first is mapping and 'rosa_classic' in check_data.channels.values()|first %}
         <table class="tbl">
-            <thead><tr><th>Channel</th><th style="text-align:center;">ROSA Classic</th><th style="text-align:center;">ROSA HCP</th><th>Version Detected</th></tr></thead>
+            <thead><tr><th>Channel</th><th style="text-align:center;">ROSA Classic</th><th style="text-align:center;">ROSA HCP</th></tr></thead>
             <tbody>
             {% for chan, info in check_data.channels.items() %}
             <tr>
                 <td>{{ chan }}</td>
-                <td style="text-align:center;">{% if info.rosa_classic %}<span class="ok">&#10003;</span>{% else %}<span class="no">&#10007;</span>{% endif %}</td>
-                <td style="text-align:center;">{% if info.rosa_hcp %}<span class="ok">&#10003;</span>{% else %}<span class="no">&#10007;</span>{% endif %}</td>
-                <td style="font-family:monospace;font-size:.9em;">{{ info.rosa_classic_output or info.rosa_hcp_output or '—' }}</td>
+                <td style="text-align:center;">{% if info.rosa_classic %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.rosa_classic_output }}</span>{% else %}<span class="no">&#10007;</span> <span style="color:var(--text-muted,#94a3b8);">—</span>{% endif %}</td>
+                <td style="text-align:center;">{% if info.rosa_hcp %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.rosa_hcp_output }}</span>{% else %}<span class="no">&#10007;</span> <span style="color:var(--text-muted,#94a3b8);">—</span>{% endif %}</td>
             </tr>
             {% endfor %}
             </tbody>
@@ -201,13 +200,12 @@
         {# ─── GCP Marketplace ─── #}
         {% elif check_data.channels is defined and check_data.channels and check_data.channels.values()|first is mapping and 'gcp_marketplace' in check_data.channels.values()|first %}
         <table class="tbl">
-            <thead><tr><th>Channel</th><th style="text-align:center;">GCP Marketplace</th><th>Version Detected</th></tr></thead>
+            <thead><tr><th>Channel</th><th style="text-align:center;">GCP Marketplace</th></tr></thead>
             <tbody>
             {% for chan, info in check_data.channels.items() %}
             <tr>
                 <td>{{ chan }}</td>
-                <td style="text-align:center;">{% if info.gcp_marketplace %}<span class="ok">&#10003;</span>{% else %}<span class="no">&#10007;</span>{% endif %}</td>
-                <td style="font-family:monospace;font-size:.9em;">{{ info.gcp_marketplace_output or '—' }}</td>
+                <td style="text-align:center;">{% if info.gcp_marketplace %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.gcp_marketplace_output }}</span>{% else %}<span class="no">&#10007;</span> <span style="color:var(--text-muted,#94a3b8);">—</span>{% endif %}</td>
             </tr>
             {% endfor %}
             </tbody>
