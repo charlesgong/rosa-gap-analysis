@@ -345,9 +345,21 @@
                         </span>
                     </li>
                     <li>
-                        <span class="meta-label">New Gates Introduced</span>
+                        <span class="meta-label">Common Gates</span>
+                        <span class="meta-value text-success">
+                            {{ comparison.common_gates_count }}
+                        </span>
+                    </li>
+                    <li>
+                        <span class="meta-label">New Gates (Target Only)</span>
                         <span class="meta-value" style="color: var(--primary)">
                             {{ comparison.new_gates_count }}
+                        </span>
+                    </li>
+                    <li>
+                        <span class="meta-label">Removed Gates (Baseline Only)</span>
+                        <span class="meta-value {% if comparison.deprecated_gates_count > 0 %}text-error{% endif %}">
+                            {{ comparison.deprecated_gates_count }}
                         </span>
                     </li>
                 </ul>
@@ -393,6 +405,41 @@
                     <strong>Missing Target Version Gate:</strong> No gates have been configured for the target minor version <code class="code-block">{{ target_minor }}</code> in OCM. Ensure target gates are defined prior to GA promotion.
                 </div>
             </div>
+        {% endif %}
+
+        {% if skipped_labels is defined and skipped_labels|length > 0 %}
+        <div class="alert-banner alert-banner-warning">
+            <span style="font-size: 1.5rem; margin-right: 12px;">ℹ️</span>
+            <div>
+                <strong>Skipped gate labels (excluded from comparison):</strong>
+                <ul style="margin: 8px 0 0 0; padding-left: 20px;">
+                    {% for label in skipped_labels %}
+                    <li><code class="code-block">{{ label }}</code></li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if comparison.common_gates|length > 0 %}
+        <h2>Common Gates (present in both versions)</h2>
+        <div style="margin-bottom: 32px;">
+            {% for gate in comparison.common_gates %}
+            <div class="gate-card" style="border-left: 3px solid var(--success);">
+                <div class="gate-header">
+                    <span class="code-block" style="font-weight: 600;">{{ gate.label }}</span>
+                </div>
+                <div class="gate-description">{{ gate.description }}</div>
+                <div class="gate-meta">
+                    <span class="meta-tag">Prefix: {{ gate.version_raw_id_prefix }}</span>
+                    <span class="meta-tag">Value: {{ gate.value }}</span>
+                    {% if gate.sts_only %}
+                    <span class="meta-tag meta-tag-sts">STS Only</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
         {% endif %}
 
         <!-- Baseline Version Gates (y-1) -->

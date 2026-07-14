@@ -116,9 +116,9 @@ done
 ### Exit Codes
 
 - **0** - Successful execution with all validation checks passing
-- **1** - Execution error (missing tools, network errors) OR validation checks 1-5 failed
+- **1** - Execution error (missing tools, network errors) OR validation checks 1-7 failed
 
-**Note:** `gap-feature-gates.py` (check 6) is informational only and always exits 0 on success.
+**Note:** `gap-feature-gates.py` (check 8) is informational only and always exits 0 on success.
 
 ### Console Output
 

@@ -16,21 +16,26 @@ pip install -r requirements.txt
 scripts/
 ├── gap-aws-sts.py              # AWS STS analysis
 ├── gap-gcp-wif.py              # GCP WIF analysis
-├── gap-feature-gates.py        # Feature gates analysis
 ├── gap-ocp-gate-ack.py         # OCP admin gate acknowledgments
+├── gap-versions-channels.py    # Version & channel availability analysis
+├── gap-ocm-version-gate.py     # OCM version gate analysis
+├── gap-feature-gates.py        # Feature gates analysis
 ├── gap-all.sh                  # Orchestrator
 ├── generate-combined-report.py # Combined report aggregator
 ├── templates/                  # Jinja2 templates
 │   ├── aws-sts.html.j2
 │   ├── gcp-wif.html.j2
-│   ├── feature-gates.html.j2
 │   ├── ocp-gate-ack.html.j2
+│   ├── versions-channels.html.j2
+│   ├── ocm-version-gate.html.j2
+│   ├── feature-gates.html.j2
 │   └── full-gap.html.j2
 └── lib/
     ├── common.py               # Utilities
     ├── openshift_releases.py   # Version resolution
     ├── reporters.py            # Report generation
     ├── ack_validation.py       # managed-cluster-config validation
+    ├── marketplace.py          # AWS/GCP marketplace checks
     ├── logging.sh              # Bash logging utilities
     └── openshift-releases.sh   # Bash version resolution
 ```
@@ -120,7 +125,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 
 from common import log_info
-from openshift_releases import resolve_baseline_version, resolve_target_version
+from openshift_releases import resolve_gap_versions
 from reporters import generate_html_report, generate_json_report
 
 # Your logic here

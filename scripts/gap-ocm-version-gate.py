@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 
 from common import log_info, log_success, log_error, log_warning
-from openshift_releases import resolve_openshift_version, extract_minor_version
+from openshift_releases import resolve_gap_versions, extract_minor_version
 from reporters import generate_html_report, generate_json_report
 
 
@@ -101,6 +101,9 @@ def fetch_ocm_version_gates():
 
 def analyze_version_gates(gates, baseline_minor, target_minor):
     """Analyze and compare version gates for baseline and target versions."""
+    # Filter out CI-only test gates (e.g., gate-test-only-ci*)
+    gates = [g for g in gates if "gate-test-only-ci" not in g.get("label", "")]
+
     baseline_gates = []
     target_gates = []
 
@@ -126,30 +129,43 @@ def analyze_version_gates(gates, baseline_minor, target_minor):
     baseline_has_gate = len(baseline_gates) > 0
     target_has_gate = len(target_gates) > 0
 
-    # Gate Comparison: Identify new, removed or common gates
-    # Since minor versions differ (e.g. 4.15 vs 4.16), raw comparison by ID is unique,
-    # but we can compare them based on gate type/labels/meanings.
-    new_gates = []
-    deprecated_gates = []
-
-    # All target gates are technically new for this release minor
-    for g in target_gates:
-        new_gates.append({
-            "id": g.get("id"),
-            "description": g.get("description"),
-            "label": g.get("label"),
-            "sts_only": g.get("sts_only", False),
-            "documentation_url": g.get("documentation_url")
-        })
-
+    # Compare gates by label to identify common, new, and removed gates
+    baseline_by_label = {}
     for g in baseline_gates:
-        deprecated_gates.append({
+        baseline_by_label[g.get("label", "")] = g
+
+    target_by_label = {}
+    for g in target_gates:
+        target_by_label[g.get("label", "")] = g
+
+    # Version-specific gate exclusions from comparison
+    skipped_labels = set()
+    if target_minor.startswith("5."):
+        # 5.x is STS-only; WIF gates don't apply
+        skipped_labels.add("api.openshift.com/gate-wif")
+
+    baseline_labels = set(baseline_by_label.keys()) - skipped_labels
+    target_labels = set(target_by_label.keys()) - skipped_labels
+
+    common_labels = sorted(baseline_labels & target_labels)
+    new_only_labels = sorted(target_labels - baseline_labels)
+    removed_only_labels = sorted(baseline_labels - target_labels)
+
+    def _summarize(g):
+        return {
             "id": g.get("id"),
             "description": g.get("description"),
             "label": g.get("label"),
             "sts_only": g.get("sts_only", False),
             "documentation_url": g.get("documentation_url")
-        })
+        }
+
+    common_gates = [
+        {"label": l, "baseline": _summarize(baseline_by_label[l]), "target": _summarize(target_by_label[l])}
+        for l in common_labels
+    ]
+    new_gates = [_summarize(target_by_label[l]) for l in new_only_labels]
+    deprecated_gates = [_summarize(baseline_by_label[l]) for l in removed_only_labels]
 
     # Basic configuration validation for metadata consistency
     metadata_errors = []
@@ -170,8 +186,10 @@ def analyze_version_gates(gates, baseline_minor, target_minor):
         "target_gates": target_gates,
         "baseline_has_gate": baseline_has_gate,
         "target_has_gate": target_has_gate,
+        "common_gates": common_gates,
         "new_gates": new_gates,
         "deprecated_gates": deprecated_gates,
+        "skipped_labels": sorted(skipped_labels),
         "config_valid": config_valid,
         "metadata_errors": metadata_errors
     }
@@ -209,6 +227,32 @@ def print_summary(analysis, is_mock, baseline_full, target_full):
     else:
         log_error(f"❌ Target version {analysis['target_minor']}.x does not have any OCM version gate configured!")
 
+    log_info("-----------------------------------------")
+    log_info("Gate Comparison (by label):")
+    common = analysis.get('common_gates', [])
+    new = analysis.get('new_gates', [])
+    removed = analysis.get('deprecated_gates', [])
+    if common:
+        log_success(f"  ✓ {len(common)} gate(s) common between {analysis['baseline_minor']} and {analysis['target_minor']}")
+        for g in common:
+            log_info(f"    - {g['label']}")
+    if new:
+        log_info(f"  + {len(new)} new gate(s) in {analysis['target_minor']} only:")
+        for g in new:
+            log_info(f"    - {g['label']}: {g['description']}")
+    if removed:
+        log_error(f"  ✗ {len(removed)} gate(s) from {analysis['baseline_minor']} missing in {analysis['target_minor']}:")
+        for g in removed:
+            log_error(f"    - {g['label']}: {g['description']}")
+        log_error(f"  ACTION REQUIRED: Create these gate(s) for version {analysis['target_minor']}")
+    skipped = analysis.get('skipped_labels', [])
+    if skipped:
+        log_info(f"  ⊘ {len(skipped)} gate label(s) excluded from comparison (not applicable to {analysis['target_minor']}):")
+        for label in skipped:
+            log_info(f"    - {label}")
+    if not common and not new and not removed:
+        log_info("  No gates to compare.")
+
     if analysis['config_valid']:
         log_success("✓ All gate configurations contain valid and complete metadata.")
     else:
@@ -233,23 +277,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve versions using shared helper
-    openshift_version = args.version or os.environ.get('OPENSHIFT_VERSION')
-
-    if openshift_version:
-        log_info(f"Resolving baseline and target from version prefix: {openshift_version}")
-        baseline_full, target_full = resolve_openshift_version(openshift_version)
-        if not baseline_full or not target_full:
-            log_error(f"Failed to resolve versions from: {openshift_version}")
-            sys.exit(1)
-    elif args.baseline and args.target:
-        baseline_full = args.baseline
-        target_full = args.target
-    else:
-        # Auto-detect using shared library
-        from openshift_releases import resolve_baseline_version, resolve_target_version
-        baseline_full = resolve_baseline_version()
-        target_full = resolve_target_version()
+    # Resolve versions using shared logic
+    baseline_full, target_full = resolve_gap_versions(
+        version=args.version, baseline=args.baseline, target=args.target
+    )
 
     baseline_minor = extract_minor_version(baseline_full)
     target_minor = extract_minor_version(target_full)
@@ -280,13 +311,20 @@ def main():
     # Print stdout summary
     print_summary(analysis_results, is_mock, baseline_full, target_full)
 
-    # Determine validation status
-    # Target should ideally have at least one gate, and all gate metadata should be valid
+    # Determine validation status based on common gate coverage
+    # FAIL: baseline gates missing from target (need to be created), or invalid metadata
+    # PASS: all baseline gate labels present in target
     validation_status = 'PASS'
-    if not analysis_results['target_has_gate']:
-        validation_status = 'WARN'  # Missing version gates is a warning / potential gap
-    elif not analysis_results['config_valid']:
-        validation_status = 'WARN'
+    if is_mock:
+        if not analysis_results['target_has_gate']:
+            validation_status = 'WARN'
+    else:
+        if len(analysis_results['deprecated_gates']) > 0:
+            validation_status = 'FAIL'
+        elif not analysis_results['target_has_gate'] and analysis_results['baseline_has_gate']:
+            validation_status = 'FAIL'
+        elif not analysis_results['config_valid']:
+            validation_status = 'FAIL'
 
     # Build report payload
     report_data = {
@@ -305,11 +343,14 @@ def main():
         'baseline_gates': analysis_results['baseline_gates'],
         'target_gates': analysis_results['target_gates'],
         'comparison': {
+            'common_gates_count': len(analysis_results['common_gates']),
             'new_gates_count': len(analysis_results['new_gates']),
             'deprecated_gates_count': len(analysis_results['deprecated_gates']),
+            'common_gates': analysis_results['common_gates'],
             'new_gates': analysis_results['new_gates'],
             'deprecated_gates': analysis_results['deprecated_gates']
         },
+        'skipped_labels': analysis_results.get('skipped_labels', []),
         'configuration_validation': {
             'valid': analysis_results['config_valid'],
             'errors': analysis_results['metadata_errors']
@@ -339,12 +380,18 @@ def main():
         generate_html_report(report_data, html_file)
         log_info(f"HTML report generated: {html_file}")
 
-    log_success("=" * 60)
-    log_success(f"✓ VALIDATION {validation_status} - OCM Version Gates Complete")
-    log_success("=" * 60)
-    log_success(f"\nCHECK #7: OCM Version Gate Analysis [{validation_status}]")
-
-    sys.exit(0)
+    if validation_status == 'FAIL':
+        log_error("=" * 60)
+        log_error(f"✗ VALIDATION {validation_status} - OCM Version Gates Complete")
+        log_error("=" * 60)
+        log_error(f"\nCHECK #7: OCM Version Gate Analysis [{validation_status}]")
+        sys.exit(1)
+    else:
+        log_success("=" * 60)
+        log_success(f"✓ VALIDATION {validation_status} - OCM Version Gates Complete")
+        log_success("=" * 60)
+        log_success(f"\nCHECK #7: OCM Version Gate Analysis [{validation_status}]")
+        sys.exit(0)
 
 
 if __name__ == '__main__':

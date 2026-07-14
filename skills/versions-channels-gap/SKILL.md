@@ -1,33 +1,32 @@
 ---
 name: versions-channels-gap
 description: >
-  Analyze OCP version availability across Cincinnati release channels.
-  Validates channel promotion status, upgrade paths, and cross-source consistency
-  between Sippy, accepted streams, and Cincinnati. Always exits 0 on successful
-  execution (informational only). Generates HTML and JSON reports.
+  Analyze OCP version availability across OCM release channels and marketplace
+  enablement (ROSA Classic, ROSA HCP, OSD GCP). Validates channel promotion
+  status and marketplace availability. Exits 1 on validation FAIL for GA
+  targets missing from required channels or marketplaces. Generates HTML and
+  JSON reports.
 compatibility:
   required_tools:
     - python3
+    - rosa
 ---
 
 # Versions & Channels Gap Analysis
 
-Analyze OCP version availability across release channels and validate upgrade path existence.
+Analyze OCP version availability across release channels and validate marketplace enablement.
 
 ## When to Use
 
 - Checking if a target version is available in the expected release channel
-- Verifying upgrade paths exist between baseline and target versions
-- Identifying versions accepted in CI but not yet promoted to channels
-- Cross-checking version data across Sippy, accepted streams, and Cincinnati
+- Verifying marketplace availability (ROSA Classic, ROSA HCP, OSD GCP)
 - Pre-upgrade channel readiness assessment
+- Validating GA readiness across channels and marketplaces
 
 ## What This Analyzes
 
-1. **Channel Availability** - Which Cincinnati channels (candidate/fast/stable) contain the baseline and target versions
-2. **Accepted vs Channels** - Versions that passed CI acceptance but haven't been promoted to any channel yet
-3. **Upgrade Paths** - Whether valid upgrade edges exist in Cincinnati from baseline to target
-4. **Cross-Source Consistency** - GA dates from Sippy vs accepted streams data
+1. **Channel Availability** - Which OCM channels (candidate/fast/stable/eus for GA, candidate-only for pre-GA) contain the baseline and target versions
+2. **Marketplace Availability** - ROSA Classic (OCM API), ROSA HCP (ROSA CLI), OSD GCP (OCM API, 4.x only — skipped for 5.x)
 
 ## Workflow
 
@@ -49,13 +48,13 @@ python3 ./scripts/gap-versions-channels.py --version 4.22 --dry-run
 
 ### Step 2: Interpret Results
 
-The script queries Cincinnati for each channel (candidate/fast/stable) for both baseline and target minor versions, then compares with accepted streams data.
+The script queries OCM for each channel for both baseline and target minor versions, then checks marketplace availability.
 
 **Key findings to look for:**
 - Baseline not in stable channel (unusual for GA versions)
 - Target only in candidate channel (normal for pre-GA)
-- No direct upgrade path between specific versions
-- Versions accepted in CI but not yet in any channel (promotion lag)
+- Target missing from ROSA HCP or ROSA Classic marketplace (FAIL for GA)
+- OSD GCP skipped for 5.x targets (AWS/STS-only)
 
 ### Step 3: Review Reports
 
@@ -65,7 +64,7 @@ firefox reports/gap-analysis-versions-channels_*.html
 
 # Parse JSON report
 jq '.summary' reports/gap-analysis-versions-channels_*.json
-jq '.upgrade_paths.sample_paths' reports/gap-analysis-versions-channels_*.json
+jq '.marketplace' reports/gap-analysis-versions-channels_*.json
 ```
 
 ## Output
@@ -77,33 +76,32 @@ jq '.upgrade_paths.sample_paths' reports/gap-analysis-versions-channels_*.json
 
 CHECK #6: Versions & Channels Analysis
 
-Baseline 4.21.18 channel status:
-  ✓ candidate-4.21
+┌─────────────────────────────────────────────────┐
+│ Baseline: 4.21.18                               │
+├─────────────────────────────────────────────────┤
+│  Channels:      stable-4.21, fast-4.21, ...     │
+│  ROSA Classic:  ✓ available                     │
+│  ROSA HCP:      ✓ available (stable, fast, ...) │
+│  OSD GCP:       ✓ available                     │
+└─────────────────────────────────────────────────┘
 
-Target 4.22.0-rc.5 channel status:
-  ✓ candidate-4.22
-
-Channel availability for 4.22:
-  ✓ candidate-4.22: 12 version(s), latest: 4.22.0-rc.5
-  ✗ fast-4.22: not available
-  ✗ stable-4.22: not available
-
-Upgrade paths (candidate-4.22):
-  Total 4.21 → 4.22 paths: 73
-  ✓ Direct path exists: 4.21.18 → 4.22.0-rc.5
-
-✅ PASSED - Version & Channel analysis complete (informational)
+┌─────────────────────────────────────────────────┐
+│ Target: 4.22.0-rc.5                             │
+├─────────────────────────────────────────────────┤
+│  Channels:      candidate-4.22                  │
+│  ROSA Classic:  ✗ not available                 │
+│  ROSA HCP:      ✓ available (candidate)         │
+│  OSD GCP:       ✗ not available                 │
+└─────────────────────────────────────────────────┘
 ```
 
-Exit code: `0` (always, informational only)
+Exit code: `0` on PASS, `1` on validation FAIL (GA targets missing from required channels/marketplaces) or execution error.
 
 ## Data Sources
 
-- **Cincinnati API**: `https://api.openshift.com/api/upgrades_info/v1/graph?channel={channel}&arch=amd64`
-- **Accepted Streams**: `https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestreams/accepted`
-- **Sippy API**: `https://sippy.dptools.openshift.org/api/releases`
-
-All APIs are public and require no authentication.
+- **OCM CLI**: `ocm list versions` (channel availability, ROSA Classic/OSD GCP marketplace) — requires `ocm login --token=<token>`, graceful fallback if absent
+- **ROSA CLI**: `rosa list versions --hosted-cp` (ROSA HCP availability)
+- **Sippy API**: `https://sippy.dptools.openshift.org/api/releases` (GA version detection)
 
 ## Example Interaction
 
@@ -114,10 +112,10 @@ All APIs are public and require no authentication.
 python3 ./scripts/gap-versions-channels.py --version 4.22 --verbose
 ```
 
-**User**: "Is there an upgrade path from 4.21.18 to 4.22.0-rc.5?"
+**User**: "Is 5.0 available on ROSA HCP?"
 
 **Response**:
 ```bash
-python3 ./scripts/gap-versions-channels.py --baseline 4.21.18 --target 4.22.0-rc.5
-# Check: "Direct path exists: 4.21.18 → 4.22.0-rc.5"
+python3 ./scripts/gap-versions-channels.py --version 5.0
+# Check marketplace section — OSD GCP will be skipped (5.x is AWS/STS-only)
 ```

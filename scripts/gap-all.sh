@@ -202,6 +202,17 @@ elif [[ -n "${OPENSHIFT_VERSION:-}" ]]; then
 
 # Check if both --baseline AND --target are set (explicit control)
 elif [[ -n "$BASELINE" ]] && [[ -n "$TARGET" ]]; then
+    # Resolve minor versions to full versions if needed (e.g., 4.21 → 4.21.15)
+    if [[ $(echo "$BASELINE" | tr -cd '.' | wc -c) -eq 1 ]]; then
+        log_info "Resolving baseline minor version: $BASELINE..."
+        BASELINE=$(get_latest_version_baseline_priority "$BASELINE")
+        log_info "Resolved baseline: $BASELINE"
+    fi
+    if [[ $(echo "$TARGET" | tr -cd '.' | wc -c) -eq 1 ]]; then
+        log_info "Resolving target minor version: $TARGET..."
+        TARGET=$(get_latest_version_target_priority "$TARGET")
+        log_info "Resolved target: $TARGET"
+    fi
     log_info "Using baseline and target from CLI: BASELINE=$BASELINE, TARGET=$TARGET"
 
 # Check if both BASE_VERSION AND TARGET_VERSION env vars are set (explicit control)
@@ -224,6 +235,18 @@ elif [[ -n "${BASE_VERSION:-}" ]] && [[ -n "${TARGET_VERSION:-}" ]]; then
     else
         TARGET="$TARGET_VERSION"
     fi
+
+    # Resolve minor versions to full versions if needed (e.g., 4.21 → 4.21.15)
+    if [[ $(echo "$BASELINE" | tr -cd '.' | wc -c) -eq 1 ]]; then
+        log_info "Resolving baseline minor version: $BASELINE..."
+        BASELINE=$(get_latest_version_baseline_priority "$BASELINE")
+        log_info "Resolved baseline: $BASELINE"
+    fi
+    if [[ $(echo "$TARGET" | tr -cd '.' | wc -c) -eq 1 ]]; then
+        log_info "Resolving target minor version: $TARGET..."
+        TARGET=$(get_latest_version_target_priority "$TARGET")
+        log_info "Resolved target: $TARGET"
+    fi
     log_info "Using baseline and target from env vars: BASELINE=$BASELINE, TARGET=$TARGET"
 
 # Default: Auto-detect both
@@ -234,11 +257,21 @@ else
     log_info "Auto-detected baseline version: $BASELINE"
     log_info "Auto-detected baseline pullspec: $BASELINE_PULLSPEC"
 
-    log_info "Auto-detecting target version from latest candidate..."
-    TARGET=$(get_latest_candidate_version)
-    TARGET_PULLSPEC=$(get_latest_candidate_pullspec)
-    log_info "Auto-detected target version: $TARGET"
-    log_info "Auto-detected target pullspec: $TARGET_PULLSPEC"
+    # Check for special target mapping (e.g., baseline 4.22 → target 5.0)
+    baseline_minor=$(extract_version_from_stable "$BASELINE")
+    special_target=$(get_special_target_mapping "$baseline_minor")
+
+    if [[ -n "$special_target" ]]; then
+        log_info "Applying special target mapping: baseline $baseline_minor → target $special_target"
+        TARGET=$(get_latest_version_target_priority "$special_target")
+        log_info "Auto-detected target version (special mapping): $TARGET"
+    else
+        log_info "Auto-detecting target version from latest candidate..."
+        TARGET=$(get_latest_candidate_version)
+        TARGET_PULLSPEC=$(get_latest_candidate_pullspec)
+        log_info "Auto-detected target version: $TARGET"
+        log_info "Auto-detected target pullspec: $TARGET_PULLSPEC"
+    fi
 fi
 
 # Parse steps if provided
@@ -375,6 +408,14 @@ main() {
         ["ocm-version-gate"]=7
         ["feature-gates"]=8
     )
+    declare -A check_display_num=(
+        ["aws"]="1-2"
+        ["gcp"]="3-4"
+        ["ocp"]=5
+        ["versions-channels"]=6
+        ["ocm-version-gate"]=7
+        ["feature-gates"]=8
+    )
     declare -A check_name=(
         ["aws"]="AWS STS Policy Gap"
         ["gcp"]="GCP WIF Template Gap"
@@ -396,7 +437,7 @@ main() {
         ["gcp"]="differences_count"
         ["ocp"]="gates_count"
         ["ocm-version-gate"]="gates_count"
-        ["versions-channels"]="accepted_not_in_channel"
+        ["versions-channels"]=""
         ["feature-gates"]="total_changes"
     )
 
@@ -559,7 +600,7 @@ EOF
         read_check_status "ocp"
     fi
 
-    # Run Versions & Channels analysis (informational only - always passes)
+    # Run Versions & Channels analysis (Check #6 - can FAIL for GA targets)
     if should_run_step "versions-channels"; then
         log_info ""
         log_info "Running Version & Channel Gap Analysis..."
@@ -579,7 +620,7 @@ EOF
         read_check_status "versions-channels"
     fi
 
-    # Run OCM Version Gate analysis (informational only - always passes on validation findings)
+    # Run OCM Version Gate analysis (Check #7 - can FAIL on validation findings)
     if should_run_step "ocm-version-gate"; then
         log_info ""
         log_info "Running OCM Version Gate Gap Analysis..."
@@ -684,7 +725,7 @@ EOF
 
     # Check if any validation checks failed (only for steps that ran)
     local any_failed=false
-    for step in aws gcp ocp; do
+    for step in aws gcp ocp versions-channels ocm-version-gate; do
         if should_run_step "$step" && [[ ${check_results[$step]} -eq 1 ]]; then
             any_failed=true
             break
@@ -694,7 +735,7 @@ EOF
     # Print individual check results
     for step in aws gcp ocp versions-channels ocm-version-gate feature-gates; do
         if should_run_step "$step"; then
-            print_individual_check "$step" "${check_num[$step]}" "${check_name[$step]}" \
+            print_individual_check "$step" "${check_display_num[$step]}" "${check_name[$step]}" \
                 "${check_results[$step]}" "${check_diff_count[$step]}" "${check_message[$step]}" \
                 "${check_type[$step]}"
         fi

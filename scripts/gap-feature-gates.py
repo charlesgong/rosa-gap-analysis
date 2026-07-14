@@ -15,7 +15,7 @@ from urllib.error import URLError
 sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 
 from common import log_info, log_success, log_error, check_command
-from openshift_releases import resolve_openshift_version, extract_minor_version
+from openshift_releases import resolve_gap_versions, extract_minor_version
 from reporters import generate_html_report, generate_json_report, generate_status_report
 
 
@@ -243,25 +243,9 @@ Exit Codes:
     args = parser.parse_args()
 
     # Resolve versions using shared logic
-    # Check for single version resolution first (--version or OPENSHIFT_VERSION)
-    openshift_version = args.version or os.environ.get('OPENSHIFT_VERSION')
-
-    if openshift_version:
-        # Single version auto-resolution
-        log_info(f"Using single version: {openshift_version}")
-        baseline_full, target_full = resolve_openshift_version(openshift_version)
-        if not baseline_full or not target_full:
-            log_error(f"Failed to resolve versions from: {openshift_version}")
-            sys.exit(1)
-    elif args.baseline and args.target:
-        # Explicit baseline and target provided
-        baseline_full = args.baseline
-        target_full = args.target
-    else:
-        # Auto-detect (fallback to individual resolution)
-        from openshift_releases import resolve_baseline_version, resolve_target_version
-        baseline_full = args.baseline or resolve_baseline_version()
-        target_full = args.target or resolve_target_version()
+    baseline_full, target_full = resolve_gap_versions(
+        version=args.version, baseline=args.baseline, target=args.target
+    )
 
     # Feature gates API needs minor version only (e.g., "4.21" not "4.21.7")
     baseline = extract_minor_version(baseline_full)

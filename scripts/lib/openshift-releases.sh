@@ -822,6 +822,27 @@ get_special_baseline_mapping() {
     esac
 }
 
+# Get special target version mapping for major version transitions
+# Inverse of get_special_baseline_mapping
+# Usage: get_special_target_mapping "4.22"
+# Returns: Special target version if exists (e.g., "5.0"), empty string otherwise
+# Exit: 0 always
+get_special_target_mapping() {
+    local baseline_version="$1"
+
+    case "$baseline_version" in
+        "4.22")
+            echo "5.0"
+            ;;
+        "4.23")
+            echo "5.1"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
 # Usage: resolve_openshift_version "4.23"
 # Returns: Two values on stdout: BASE_VERSION TARGET_VERSION (space-separated)
 # Exit: 0 on success (or skip scenario), 1 on failure
@@ -1015,6 +1036,9 @@ export -f get_all_minor_versions_from_accepted_streams
 export -f get_previous_z_stream_version
 export -f get_latest_version_for_line
 export -f get_special_baseline_mapping
+export -f get_special_target_mapping
+export -f get_latest_version_baseline_priority
+export -f get_latest_version_target_priority
 export -f resolve_openshift_version
 
 # If script is executed directly (not sourced), provide CLI interface

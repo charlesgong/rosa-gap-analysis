@@ -27,9 +27,9 @@ The framework performs **8 validation checks** across all scripts:
 | **3** | GCP WIF Resources | Validates WIF template in [managed-cluster-config](https://github.com/openshift/managed-cluster-config) | Exit 1 on FAIL |
 | **4** | GCP WIF Admin Ack | Validates GCP acknowledgment files | Exit 1 on FAIL |
 | **5** | OCP Admin Gates | Validates admin gate acknowledgments | Exit 1 on FAIL |
-| **6** | Feature Gates | Tracks feature gate changes (informational) | Always PASS |
-| **7** | Versions & Channels | Validates version availability in release channels and marketplaces (informational) | Always PASS |
-| **8** | OCM Version Gates | Validates OCM version gate configurations | Always PASS |
+| **6** | Versions & Channels | Validates version availability in release channels and marketplaces | Exit 1 on FAIL |
+| **7** | OCM Version Gates | Validates OCM version gate configurations | Exit 1 on FAIL |
+| **8** | Feature Gates | Tracks feature gate changes (informational) | Always PASS |
 
 See [Validation Checks](docs/validation-checks.md) for detailed information about each check.
 
@@ -184,6 +184,7 @@ gap-analysis/
 │   ├── gap-gcp-wif.py       # GCP WIF policy analysis
 │   ├── gap-feature-gates.py # Feature gate analysis
 │   ├── gap-ocp-gate-ack.py  # OCP admin gate acknowledgment analysis
+│   ├── gap-versions-channels.py # Version & channel availability analysis
 │   ├── gap-ocm-version-gate.py # OCM version gate analysis
 │   ├── gap-all.sh           # Run all analyses
 │   └── lib/                 # Shared libraries
@@ -217,9 +218,10 @@ Scripts are designed for CI/CD integration:
 | `gap-aws-sts.py` | Successful execution | Execution error OR validation FAIL (checks 1-2) |
 | `gap-gcp-wif.py` | Successful execution | Execution error OR validation FAIL (checks 3-4) |
 | `gap-ocp-gate-ack.py` | Successful execution | Execution error OR validation FAIL (check 5) |
-| `gap-feature-gates.py` | Always on success | Execution error only (check 6 is informational) |
-| `gap-versions-channels.py` | Always on success | Execution error only (check 7 is informational) |
-| `gap-all.sh` | All checks 1-5 pass | Any check 1-5 fails |
+| `gap-versions-channels.py` | Successful execution | Execution error OR validation FAIL (check 6) |
+| `gap-ocm-version-gate.py` | Successful execution | Execution error OR validation FAIL (check 7) |
+| `gap-feature-gates.py` | Always on success | Execution error only (check 8 is informational) |
+| `gap-all.sh` | All checks 1-7 pass | Any check 1-7 fails |
 
 **Important:** Validation distinguishes between **errors** and **warnings**:
 - **ERRORS** (missing expected changes): Validation FAILS → exit 1

@@ -9,77 +9,107 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
 
 # Add lib directory to path
 sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 
-from common import log_info, log_success, log_error, log_warning
-from openshift_releases import resolve_openshift_version, extract_minor_version
+from common import log_info, log_success, log_error, log_warning, is_version_5x
+from openshift_releases import resolve_gap_versions, extract_minor_version, fetch_sippy_ga_dates, is_ga_minor_version
 from reporters import generate_html_report, generate_json_report, generate_status_report
 
 
-CINCINNATI_API = "https://api.openshift.com/api/upgrades_info/v1/graph"
-ACCEPTED_STREAMS_API = "https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestreams/accepted"
-SIPPY_API = "https://sippy.dptools.openshift.org/api/releases"
-
-CHANNELS = ['candidate', 'fast', 'stable']
+GA_CHANNELS = ['stable', 'eus', 'fast', 'candidate']
+PRE_GA_CHANNELS = ['candidate']
 
 
-def fetch_cincinnati_channel(channel, arch="amd64"):
-    """Fetch version graph from Cincinnati for a specific channel.
+def _fetch_channel_via_ocm(minor_version, channel_group):
+    """Fetch versions from OCM CLI for a minor version and channel group.
 
-    Returns (data, error) tuple. On failure, data is the empty fallback and
-    error is a descriptive string so callers can surface API issues.
+    Returns (versions_list, error) tuple.
     """
     try:
-        url = f"{CINCINNATI_API}?channel={channel}&arch={arch}"
-        req = Request(url, headers={
-            'User-Agent': 'gap-analysis-script',
-            'Accept': 'application/json'
-        })
-        with urlopen(req, timeout=30) as response:
-            return json.loads(response.read()), None
-    except (URLError, HTTPError, json.JSONDecodeError) as e:
-        log_warning(f"Failed to fetch Cincinnati channel {channel}: {e}")
-        return {'nodes': [], 'edges': []}, f"Cincinnati channel {channel}: {e}"
+        search = f"raw_id like '{minor_version}%' and channel_group='{channel_group}'"
+        result = subprocess.run(
+            ['ocm', 'get', '/api/clusters_mgmt/v1/versions',
+             '--parameter', f'search={search}',
+             '--parameter', 'size=200',
+             '--parameter', 'order=raw_id asc'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            return [], f"ocm versions query for {channel_group}-{minor_version}: {err_msg}"
+        data = json.loads(result.stdout)
+        items = data.get('items', [])
+        versions = sorted([v.get('raw_id', '') for v in items
+                           if v.get('raw_id', '').startswith(f"{minor_version}.")])
+        return versions, None
+    except FileNotFoundError:
+        return [], "ocm CLI not found"
+    except subprocess.TimeoutExpired:
+        return [], f"ocm versions query for {channel_group}-{minor_version}: timeout"
+    except json.JSONDecodeError as e:
+        return [], f"ocm versions query for {channel_group}-{minor_version}: {e}"
 
 
-def fetch_accepted_streams():
-    """Fetch accepted release streams."""
+def _fetch_channel_via_rosa(minor_version, channel_group):
+    """Fetch versions from ROSA CLI for a minor version and channel group.
+
+    Returns (versions_list, error) tuple. Parses text output from
+    'rosa list versions --channel-group <group>'.
+    """
     try:
-        req = Request(ACCEPTED_STREAMS_API, headers={'User-Agent': 'gap-analysis-script'})
-        with urlopen(req, timeout=30) as response:
-            return json.loads(response.read())
-    except (URLError, HTTPError, json.JSONDecodeError) as e:
-        log_warning(f"Failed to fetch accepted streams: {e}")
-        return {}
+        result = subprocess.run(
+            ['rosa', 'list', 'versions', '--channel-group', channel_group],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else f"exit code {result.returncode}"
+            return [], f"rosa versions query for {channel_group}-{minor_version}: {err_msg}"
+        versions = []
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if parts and re.match(r'^\d+\.\d+\.', parts[0]) and parts[0].startswith(f"{minor_version}."):
+                versions.append(parts[0])
+        return sorted(versions), None
+    except FileNotFoundError:
+        return [], "rosa CLI not found"
+    except subprocess.TimeoutExpired:
+        return [], f"rosa versions query for {channel_group}-{minor_version}: timeout"
 
 
-def fetch_sippy_releases():
-    """Fetch release info from Sippy API."""
-    try:
-        req = Request(SIPPY_API, headers={'User-Agent': 'gap-analysis-script'})
-        with urlopen(req, timeout=30) as response:
-            return json.loads(response.read())
-    except (URLError, HTTPError, json.JSONDecodeError) as e:
-        log_warning(f"Failed to fetch Sippy releases: {e}")
-        return {}
+def fetch_ocm_channel_data(minor_version, channel_group):
+    """Fetch versions for a minor version and channel group via OCM or ROSA CLI.
+
+    Tries OCM CLI first (structured JSON). Falls back to ROSA CLI (text parsing)
+    if OCM is unavailable. Returns (versions_list, error) tuple.
+    """
+    if not re.match(r'^\d+\.\d+$', minor_version):
+        return [], f"Invalid minor version format: {minor_version}"
+    if not re.match(r'^[a-z]+$', channel_group):
+        return [], f"Invalid channel group format: {channel_group}"
+
+    versions, ocm_err = _fetch_channel_via_ocm(minor_version, channel_group)
+    if not ocm_err:
+        return versions, None
+
+    log_warning(f"OCM CLI failed ({ocm_err}), falling back to ROSA CLI")
+    versions, rosa_err = _fetch_channel_via_rosa(minor_version, channel_group)
+    if not rosa_err:
+        return versions, None
+
+    return [], f"{ocm_err}; rosa fallback also failed: {rosa_err}"
 
 
-def get_versions_in_channel(channel_data, minor_version):
-    """Extract versions matching a minor version from Cincinnati channel data."""
-    versions = []
-    for node in channel_data.get('nodes', []):
-        version = node.get('version', '')
-        if version.startswith(f"{minor_version}."):
-            versions.append(version)
-    return sorted(versions, key=lambda v: v)
 
-
-def analyze_channel_availability(baseline_minor, target_minor, baseline_full, target_full):
+def analyze_channel_availability(baseline_minor, target_minor, baseline_full, target_full,
+                                  baseline_channels=None, target_channels=None):
     """Analyze which channels contain baseline and target versions."""
+    if baseline_channels is None:
+        baseline_channels = GA_CHANNELS
+    if target_channels is None:
+        target_channels = GA_CHANNELS
+
     result = {
         'baseline': {
             'version': baseline_full,
@@ -98,32 +128,35 @@ def analyze_channel_availability(baseline_minor, target_minor, baseline_full, ta
         'api_errors': []
     }
 
-    minors_to_check = {baseline_minor, target_minor}
+    for channel_type in baseline_channels:
+        log_info(f"Querying OCM versions: {channel_type}-{baseline_minor}")
+        versions, err = fetch_ocm_channel_data(baseline_minor, channel_type)
+        if err:
+            result['api_errors'].append(err)
+        channel_info = {
+            'available': len(versions) > 0,
+            'version_count': len(versions),
+            'versions': versions,
+            'latest': versions[-1] if versions else None
+        }
+        result['baseline']['channels'][channel_type] = channel_info
+        if len(versions) > 0:
+            result['baseline_version_channels'].append(channel_type)
 
-    for minor in minors_to_check:
-        for channel_type in CHANNELS:
-            channel_name = f"{channel_type}-{minor}"
-            log_info(f"Querying Cincinnati channel: {channel_name}")
-            channel_data, err = fetch_cincinnati_channel(channel_name)
-            if err:
-                result['api_errors'].append(err)
-
-            versions = get_versions_in_channel(channel_data, minor)
-            channel_info = {
-                'available': len(versions) > 0,
-                'version_count': len(versions),
-                'versions': versions,
-                'latest': versions[-1] if versions else None
-            }
-
-            if minor == baseline_minor:
-                result['baseline']['channels'][channel_type] = channel_info
-                if baseline_full in versions:
-                    result['baseline_version_channels'].append(channel_type)
-            if minor == target_minor:
-                result['target']['channels'][channel_type] = channel_info
-                if target_full in versions:
-                    result['target_version_channels'].append(channel_type)
+    for channel_type in target_channels:
+        log_info(f"Querying OCM versions: {channel_type}-{target_minor}")
+        versions, err = fetch_ocm_channel_data(target_minor, channel_type)
+        if err:
+            result['api_errors'].append(err)
+        channel_info = {
+            'available': len(versions) > 0,
+            'version_count': len(versions),
+            'versions': versions,
+            'latest': versions[-1] if versions else None
+        }
+        result['target']['channels'][channel_type] = channel_info
+        if len(versions) > 0:
+            result['target_version_channels'].append(channel_type)
 
     result['baseline_in_stable'] = 'stable' in result['baseline_version_channels']
 
@@ -134,163 +167,6 @@ def analyze_channel_availability(baseline_minor, target_minor, baseline_full, ta
 
     return result
 
-
-def analyze_accepted_vs_channels(target_minor):
-    """Compare accepted streams with Cincinnati channel data."""
-    result = {
-        'accepted_versions': [],
-        'channel_versions': [],
-        'accepted_only': [],
-        'channel_only': [],
-        'consistent': [],
-        'accepted_count': 0,
-        'channel_count': 0,
-        'api_errors': []
-    }
-
-    streams = fetch_accepted_streams()
-    if not streams:
-        return result
-
-    # Collect accepted versions for this minor version from all streams
-    accepted = set()
-    for stream_name, versions in streams.items():
-        if isinstance(versions, list):
-            for v in versions:
-                if v.startswith(f"{target_minor}."):
-                    accepted.add(v)
-
-    # Collect versions from Cincinnati channels
-    channel_versions = set()
-    for channel_type in CHANNELS:
-        channel_name = f"{channel_type}-{target_minor}"
-        channel_data, err = fetch_cincinnati_channel(channel_name)
-        if err:
-            result['api_errors'].append(err)
-        for node in channel_data.get('nodes', []):
-            version = node.get('version', '')
-            if version.startswith(f"{target_minor}."):
-                channel_versions.add(version)
-
-    result['accepted_versions'] = sorted(accepted)
-    result['channel_versions'] = sorted(channel_versions)
-    result['accepted_only'] = sorted(accepted - channel_versions)
-    result['channel_only'] = sorted(channel_versions - accepted)
-    result['consistent'] = sorted(accepted & channel_versions)
-    result['accepted_count'] = len(accepted)
-    result['channel_count'] = len(channel_versions)
-
-    return result
-
-
-def analyze_upgrade_paths(baseline_minor, target_minor, baseline_full, target_full):
-    """Analyze upgrade paths between baseline and target versions."""
-    result = {
-        'total_paths': 0,
-        'direct_path_exists': False,
-        'paths_from_baseline': 0,
-        'paths_to_target': 0,
-        'sample_paths': [],
-        'channel_queried': None,
-        'api_errors': []
-    }
-
-    is_z_stream = (baseline_minor == target_minor)
-
-    if is_z_stream:
-        channel_name = f"stable-{target_minor}"
-    else:
-        channel_name = f"candidate-{target_minor}"
-
-    result['channel_queried'] = channel_name
-    log_info(f"Querying upgrade paths from Cincinnati channel: {channel_name}")
-    channel_data, err = fetch_cincinnati_channel(channel_name)
-    if err:
-        result['api_errors'].append(err)
-
-    nodes = channel_data.get('nodes', [])
-    edges = channel_data.get('edges', [])
-
-    if not nodes or not edges:
-        return result
-
-    version_idx = {i: n['version'] for i, n in enumerate(nodes)}
-
-    cross_paths = []
-    for src, dst in edges:
-        src_v = version_idx.get(src, '')
-        dst_v = version_idx.get(dst, '')
-
-        if src_v.startswith(f"{baseline_minor}.") and dst_v.startswith(f"{target_minor}."):
-            cross_paths.append({'from': src_v, 'to': dst_v})
-
-    result['total_paths'] = len(cross_paths)
-    result['sample_paths'] = cross_paths[:10]
-
-    result['direct_path_exists'] = any(
-        p['from'] == baseline_full and p['to'] == target_full
-        for p in cross_paths
-    )
-
-    result['paths_from_baseline'] = sum(
-        1 for p in cross_paths if p['from'] == baseline_full
-    )
-    result['paths_to_target'] = sum(
-        1 for p in cross_paths if p['to'] == target_full
-    )
-
-    return result
-
-
-def analyze_cross_source_consistency(baseline_minor, target_minor):
-    """Check consistency across Sippy, accepted streams, and Cincinnati."""
-    result = {
-        'baseline_ga_date': None,
-        'target_ga_date': None,
-        'baseline_is_ga': False,
-        'target_is_ga': False,
-        'sippy_releases': [],
-        'observations': []
-    }
-
-    sippy = fetch_sippy_releases()
-    if not sippy:
-        result['observations'].append("Sippy API unavailable — skipped GA date check")
-        return result
-
-    ga_dates = sippy.get('ga_dates', {})
-    releases = sippy.get('releases', [])
-
-    result['sippy_releases'] = [r for r in releases if not r.endswith('-okd')]
-
-    if baseline_minor in ga_dates:
-        result['baseline_ga_date'] = ga_dates[baseline_minor]
-        result['baseline_is_ga'] = True
-    if target_minor in ga_dates:
-        result['target_ga_date'] = ga_dates[target_minor]
-        result['target_is_ga'] = True
-
-    if result['baseline_is_ga'] and not result['target_is_ga']:
-        result['observations'].append(
-            f"Baseline {baseline_minor} is GA (since {result['baseline_ga_date'][:10]}), "
-            f"target {target_minor} is pre-GA"
-        )
-    elif result['baseline_is_ga'] and result['target_is_ga']:
-        result['observations'].append(
-            f"Both versions are GA: {baseline_minor} ({result['baseline_ga_date'][:10]}), "
-            f"{target_minor} ({result['target_ga_date'][:10]})"
-        )
-    elif not result['baseline_is_ga']:
-        result['observations'].append(
-            f"Baseline {baseline_minor} is pre-GA — upgrade path may be limited"
-        )
-
-    if target_minor not in [r for r in releases if not r.endswith('-okd')]:
-        result['observations'].append(
-            f"Target {target_minor} not found in Sippy releases list"
-        )
-
-    return result
 
 
 def is_ocm_authenticated():
@@ -331,8 +207,41 @@ def fetch_ocm_versions(minor_version, channel_group='stable'):
         return []
 
 
-def analyze_marketplace_availability(baseline_minor, target_minor, baseline_full, target_full):
-    """Check version availability on AWS (ROSA) and GCP marketplaces via OCM API."""
+def fetch_rosa_hcp_versions(minor_version, channel_group='candidate'):
+    """Fetch HCP-enabled versions from ROSA CLI for a minor version and channel group."""
+    try:
+        result = subprocess.run(
+            ['rosa', 'list', 'versions', '--hosted-cp', '--channel-group', channel_group],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return [], f"rosa HCP versions query for {channel_group}-{minor_version}: exit code {result.returncode}"
+        versions = []
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if parts and re.match(r'^\d+\.\d+\.', parts[0]) and parts[0].startswith(f"{minor_version}."):
+                versions.append(parts[0])
+        return sorted(versions), None
+    except FileNotFoundError:
+        return [], "rosa CLI not found"
+    except subprocess.TimeoutExpired:
+        return [], f"rosa HCP versions query for {channel_group}-{minor_version}: timeout"
+
+
+def analyze_marketplace_availability(baseline_minor, target_minor, baseline_full, target_full,
+                                      skip_gcp_baseline=False, skip_gcp_target=False,
+                                      baseline_channels=None, target_channels=None):
+    """Check version availability on ROSA Classic, ROSA HCP, and OSD GCP marketplaces.
+
+    Uses the same GA-aware channel sets as channel availability checks:
+    GA versions check all channels, pre-GA versions check candidate only.
+    OSD GCP skip is per-version: a 4.x baseline gets GCP checked even if target is 5.x.
+    """
+    if baseline_channels is None:
+        baseline_channels = GA_CHANNELS
+    if target_channels is None:
+        target_channels = GA_CHANNELS
+
     result = {
         'available': False,
         'aws': {
@@ -340,24 +249,49 @@ def analyze_marketplace_availability(baseline_minor, target_minor, baseline_full
             'target': {'version': target_full, 'rosa_enabled': None, 'channel_group': None},
             'target_minor_versions': []
         },
+        'hcp': {
+            'baseline': {'version': baseline_full, 'hcp_enabled': False, 'channels': []},
+            'target': {'version': target_full, 'hcp_enabled': False, 'channels': []},
+        },
         'gcp': {
-            'baseline': {'version': baseline_full, 'gcp_marketplace_enabled': None, 'channel_group': None},
-            'target': {'version': target_full, 'gcp_marketplace_enabled': None, 'channel_group': None},
-            'target_minor_versions': []
+            'baseline': {'version': baseline_full, 'gcp_marketplace_enabled': None, 'channel_group': None, 'skipped': skip_gcp_baseline},
+            'target': {'version': target_full, 'gcp_marketplace_enabled': None, 'channel_group': None, 'skipped': skip_gcp_target},
+            'target_minor_versions': [],
         }
     }
 
+    # ROSA HCP check via ROSA CLI (doesn't require OCM auth)
+    log_info("Checking ROSA HCP availability via ROSA CLI...")
+    for channel_group in target_channels:
+        log_info(f"  Querying ROSA HCP versions: {channel_group}-{target_minor}")
+        versions, err = fetch_rosa_hcp_versions(target_minor, channel_group)
+        if err:
+            log_warning(f"  HCP check failed: {err}")
+            continue
+        if versions:
+            result['hcp']['target']['channels'].append(channel_group)
+            result['hcp']['target']['hcp_enabled'] = True
+
+    for channel_group in baseline_channels:
+        log_info(f"  Querying ROSA HCP versions: {channel_group}-{baseline_minor}")
+        versions, err = fetch_rosa_hcp_versions(baseline_minor, channel_group)
+        if err:
+            continue
+        if versions:
+            result['hcp']['baseline']['channels'].append(channel_group)
+            result['hcp']['baseline']['hcp_enabled'] = True
+            break
+
+    # ROSA Classic and OSD GCP checks via OCM API
     if not is_ocm_authenticated():
-        log_warning("OCM not authenticated — skipping marketplace validation")
+        log_warning("OCM not authenticated — skipping ROSA Classic and OSD GCP marketplace validation")
         log_warning("  Run 'ocm login --token=<token>' to enable marketplace checks")
         return result
 
     result['available'] = True
-    log_info("OCM authenticated — checking marketplace availability")
+    log_info("OCM authenticated — checking ROSA Classic and OSD GCP marketplace availability")
 
-    channel_groups = ['stable', 'candidate', 'fast', 'nightly']
-
-    for channel_group in channel_groups:
+    for channel_group in target_channels:
         versions = fetch_ocm_versions(target_minor, channel_group)
         for v in versions:
             raw_id = v.get('id', '').replace('openshift-v', '')
@@ -371,151 +305,133 @@ def analyze_marketplace_availability(baseline_minor, target_minor, baseline_full
             }
 
             result['aws']['target_minor_versions'].append(version_info)
-            result['gcp']['target_minor_versions'].append(version_info)
+            if not skip_gcp_target:
+                result['gcp']['target_minor_versions'].append(version_info)
 
             if raw_id == target_full or raw_id == f"{target_full}-{channel_group}":
                 result['aws']['target']['rosa_enabled'] = v.get('rosa_enabled', False)
                 result['aws']['target']['channel_group'] = channel_group
-                result['gcp']['target']['gcp_marketplace_enabled'] = v.get('gcp_marketplace_enabled', False)
-                result['gcp']['target']['channel_group'] = channel_group
+                if not skip_gcp_target:
+                    result['gcp']['target']['gcp_marketplace_enabled'] = v.get('gcp_marketplace_enabled', False)
+                    result['gcp']['target']['channel_group'] = channel_group
 
-    for channel_group in channel_groups:
+    for channel_group in baseline_channels:
         versions = fetch_ocm_versions(baseline_minor, channel_group)
         for v in versions:
             raw_id = v.get('id', '').replace('openshift-v', '')
             if raw_id == baseline_full or raw_id == f"{baseline_full}-{channel_group}":
                 result['aws']['baseline']['rosa_enabled'] = v.get('rosa_enabled', False)
                 result['aws']['baseline']['channel_group'] = channel_group
-                result['gcp']['baseline']['gcp_marketplace_enabled'] = v.get('gcp_marketplace_enabled', False)
-                result['gcp']['baseline']['channel_group'] = channel_group
+                if not skip_gcp_baseline:
+                    result['gcp']['baseline']['gcp_marketplace_enabled'] = v.get('gcp_marketplace_enabled', False)
+                    result['gcp']['baseline']['channel_group'] = channel_group
                 break
         if result['aws']['baseline']['rosa_enabled'] is not None:
             break
 
+    # Fallback: if exact baseline version not found, check any version for that minor
+    if result['aws']['baseline']['rosa_enabled'] is None:
+        for channel_group in baseline_channels:
+            versions = fetch_ocm_versions(baseline_minor, channel_group)
+            for v in versions:
+                if v.get('rosa_enabled', False):
+                    raw_id = v.get('id', '').replace('openshift-v', '')
+                    result['aws']['baseline']['rosa_enabled'] = True
+                    result['aws']['baseline']['channel_group'] = channel_group
+                    result['aws']['baseline']['version'] = raw_id
+                    if not skip_gcp_baseline and v.get('gcp_marketplace_enabled', False):
+                        result['gcp']['baseline']['gcp_marketplace_enabled'] = True
+                        result['gcp']['baseline']['channel_group'] = channel_group
+                        result['gcp']['baseline']['version'] = raw_id
+                    break
+            if result['aws']['baseline']['rosa_enabled'] is not None:
+                break
+
     return result
 
 
-def print_marketplace_analysis(marketplace_analysis, baseline_full, target_full):
-    """Print marketplace analysis results."""
-    if not marketplace_analysis['available']:
-        return
+def _print_version_block(role, full_ver, minor_ver, channel_analysis, marketplace_analysis, verbose):
+    """Print a single version block with channels and marketplace status."""
+    role_key = role.lower()
+    ch_data = channel_analysis[role_key]
+    version_channels = channel_analysis[f'{role_key}_version_channels']
+    skip_gcp = marketplace_analysis and marketplace_analysis['gcp'][role_key].get('skipped', False) if marketplace_analysis else False
+    ocm_available = marketplace_analysis and marketplace_analysis.get('available', False)
 
-    log_info(f"\nMarketplace availability:")
+    log_info(f"┌─ {role}: {full_ver}")
 
-    # AWS (ROSA)
-    aws_baseline = marketplace_analysis['aws']['baseline']
-    aws_target = marketplace_analysis['aws']['target']
-
-    if aws_baseline['rosa_enabled'] is not None:
-        if aws_baseline['rosa_enabled']:
-            log_info(f"  AWS: ✓ Baseline {baseline_full} available (ROSA enabled, {aws_baseline['channel_group']})")
-        else:
-            log_warning(f"  AWS: ✗ Baseline {baseline_full} NOT available on AWS marketplace")
+    if version_channels:
+        ch_parts = []
+        for ch in version_channels:
+            ch_info = ch_data['channels'].get(ch, {})
+            if verbose and ch_info.get('version_count'):
+                ch_parts.append(f"✓ {ch} ({ch_info['version_count']}v, latest: {ch_info['latest']})")
+            else:
+                ch_parts.append(f"✓ {ch}")
+        log_info(f"│  Channels:      {', '.join(ch_parts)}")
     else:
-        log_info(f"  AWS: - Baseline {baseline_full} not found in OCM")
+        log_warning(f"│  Channels:      ✗ not found in any {minor_ver} channel")
 
-    if aws_target['rosa_enabled'] is not None:
-        if aws_target['rosa_enabled']:
-            log_info(f"  AWS: ✓ Target {target_full} available (ROSA enabled, {aws_target['channel_group']})")
+    if verbose:
+        for ch_type, ch_info in ch_data['channels'].items():
+            if ch_type not in version_channels:
+                if ch_info.get('available'):
+                    log_info(f"│    └ {ch_type}-{minor_ver}: {ch_info['version_count']} versions (but {full_ver} not present)")
+                else:
+                    log_info(f"│    └ {ch_type}-{minor_ver}: not available")
+
+    if marketplace_analysis:
+        hcp = marketplace_analysis['hcp'][role_key]
+        if hcp['hcp_enabled']:
+            log_info(f"│  ROSA HCP:      ✓ available ({', '.join(hcp['channels'])})")
         else:
-            log_warning(f"  AWS: ✗ Target {target_full} NOT available on AWS marketplace")
-    else:
-        log_info(f"  AWS: - Target {target_full} not found in OCM")
+            log_info(f"│  ROSA HCP:      ✗ not available")
 
-    # GCP
-    gcp_baseline = marketplace_analysis['gcp']['baseline']
-    gcp_target = marketplace_analysis['gcp']['target']
+        if ocm_available:
+            aws = marketplace_analysis['aws'][role_key]
+            if aws['rosa_enabled'] is None:
+                log_info(f"│  ROSA Classic:  - not found in OCM")
+            elif aws['rosa_enabled']:
+                matched_ver = aws.get('version', full_ver)
+                suffix = f" (via {matched_ver})" if matched_ver != full_ver else ""
+                log_info(f"│  ROSA Classic:  ✓ enabled{suffix}")
+            else:
+                log_info(f"│  ROSA Classic:  ✗ disabled")
 
-    if gcp_baseline['gcp_marketplace_enabled'] is not None:
-        if gcp_baseline['gcp_marketplace_enabled']:
-            log_info(f"  GCP: ✓ Baseline {baseline_full} available (GCP marketplace, {gcp_baseline['channel_group']})")
+            if skip_gcp:
+                log_info(f"│  OSD GCP:       ⊘ skipped (5.x AWS/STS-only)")
+            else:
+                gcp = marketplace_analysis['gcp'][role_key]
+                if gcp['gcp_marketplace_enabled'] is None:
+                    log_info(f"│  OSD GCP:       - not found in OCM")
+                elif gcp['gcp_marketplace_enabled']:
+                    log_info(f"│  OSD GCP:       ✓ enabled")
+                else:
+                    log_info(f"│  OSD GCP:       ✗ disabled")
         else:
-            log_warning(f"  GCP: ✗ Baseline {baseline_full} NOT available on GCP marketplace")
-    else:
-        log_info(f"  GCP: - Baseline {baseline_full} not found in OCM")
+            log_info(f"│  ROSA Classic:  — OCM not authenticated")
+            if skip_gcp:
+                log_info(f"│  OSD GCP:       ⊘ skipped (5.x AWS/STS-only)")
+            else:
+                log_info(f"│  OSD GCP:       — OCM not authenticated")
 
-    if gcp_target['gcp_marketplace_enabled'] is not None:
-        if gcp_target['gcp_marketplace_enabled']:
-            log_info(f"  GCP: ✓ Target {target_full} available (GCP marketplace, {gcp_target['channel_group']})")
-        else:
-            log_warning(f"  GCP: ✗ Target {target_full} NOT available on GCP marketplace")
-    else:
-        log_info(f"  GCP: - Target {target_full} not found in OCM")
-
-    # Summary of target minor versions on marketplaces
-    aws_enabled = [v for v in marketplace_analysis['aws']['target_minor_versions'] if v['rosa_enabled']]
-    gcp_enabled = [v for v in marketplace_analysis['gcp']['target_minor_versions'] if v['gcp_marketplace_enabled']]
-    total_versions = len(marketplace_analysis['aws']['target_minor_versions'])
-
-    if total_versions > 0:
-        log_info(f"\n  Target minor version marketplace summary:")
-        log_info(f"    AWS (ROSA enabled): {len(aws_enabled)}/{total_versions} versions")
-        log_info(f"    GCP (marketplace enabled): {len(gcp_enabled)}/{total_versions} versions")
+    log_info(f"└──────────────────────────────────────────")
 
 
-def print_analysis(channel_analysis, accepted_analysis, upgrade_analysis, consistency_analysis,
+def print_analysis(channel_analysis,
                    baseline_full, target_full, verbose=False, marketplace_analysis=None):
-    """Print analysis results."""
+    """Print analysis results organized by version."""
     baseline_minor = channel_analysis['baseline']['minor']
     target_minor = channel_analysis['target']['minor']
 
     log_info("\nCHECK #6: Versions & Channels Analysis")
+    log_info("")
 
-    # Channel availability
-    log_info(f"\nBaseline {baseline_full} channel status:")
-    if channel_analysis['baseline_version_channels']:
-        for ch in channel_analysis['baseline_version_channels']:
-            log_info(f"  ✓ {ch}-{baseline_minor}")
-    else:
-        log_warning(f"  ✗ Not found in any {baseline_minor} channel")
-
-    log_info(f"\nTarget {target_full} channel status:")
-    if channel_analysis['target_version_channels']:
-        for ch in channel_analysis['target_version_channels']:
-            log_info(f"  ✓ {ch}-{target_minor}")
-    else:
-        log_warning(f"  ✗ Not found in any {target_minor} channel")
-
-    log_info(f"\nChannel availability for {target_minor}:")
-    for ch_type in CHANNELS:
-        ch_info = channel_analysis['target']['channels'].get(ch_type, {})
-        if ch_info.get('available'):
-            log_info(f"  ✓ {ch_type}-{target_minor}: {ch_info['version_count']} version(s), latest: {ch_info['latest']}")
-        else:
-            log_info(f"  ✗ {ch_type}-{target_minor}: not available")
-
-    # Accepted vs channels
-    if accepted_analysis['accepted_only']:
-        log_info(f"\nAccepted in CI but not in any channel ({len(accepted_analysis['accepted_only'])}):")
-        for v in accepted_analysis['accepted_only'][:5]:
-            log_info(f"  • {v}")
-        if len(accepted_analysis['accepted_only']) > 5:
-            log_info(f"  ... and {len(accepted_analysis['accepted_only']) - 5} more")
-
-    # Upgrade paths
-    log_info(f"\nUpgrade paths ({upgrade_analysis['channel_queried']}):")
-    log_info(f"  Total {baseline_minor} → {target_minor} paths: {upgrade_analysis['total_paths']}")
-    if upgrade_analysis['direct_path_exists']:
-        log_success(f"  ✓ Direct path exists: {baseline_full} → {target_full}")
-    else:
-        log_warning(f"  ✗ No direct path: {baseline_full} → {target_full}")
-    log_info(f"  Paths from {baseline_full}: {upgrade_analysis['paths_from_baseline']}")
-    log_info(f"  Paths to {target_full}: {upgrade_analysis['paths_to_target']}")
-
-    if verbose and upgrade_analysis['sample_paths']:
-        log_info(f"\n  Sample upgrade paths:")
-        for p in upgrade_analysis['sample_paths']:
-            log_info(f"    {p['from']} → {p['to']}")
-
-    # Cross-source consistency
-    if consistency_analysis['observations']:
-        log_info(f"\nCross-source observations:")
-        for obs in consistency_analysis['observations']:
-            log_info(f"  ℹ️  {obs}")
-
-    # Marketplace availability
-    if marketplace_analysis:
-        print_marketplace_analysis(marketplace_analysis, baseline_full, target_full)
+    _print_version_block('Baseline', baseline_full, baseline_minor,
+                         channel_analysis, marketplace_analysis, verbose)
+    log_info("")
+    _print_version_block('Target', target_full, target_minor,
+                         channel_analysis, marketplace_analysis, verbose)
 
 
 def main():
@@ -556,21 +472,9 @@ Exit Codes:
     args = parser.parse_args()
 
     # Resolve versions using shared logic
-    openshift_version = args.version or os.environ.get('OPENSHIFT_VERSION')
-
-    if openshift_version:
-        log_info(f"Using single version: {openshift_version}")
-        baseline_full, target_full = resolve_openshift_version(openshift_version)
-        if not baseline_full or not target_full:
-            log_error(f"Failed to resolve versions from: {openshift_version}")
-            sys.exit(1)
-    elif args.baseline and args.target:
-        baseline_full = args.baseline
-        target_full = args.target
-    else:
-        from openshift_releases import resolve_baseline_version, resolve_target_version
-        baseline_full = args.baseline or resolve_baseline_version()
-        target_full = args.target or resolve_target_version()
+    baseline_full, target_full = resolve_gap_versions(
+        version=args.version, baseline=args.baseline, target=args.target
+    )
 
     baseline_minor = extract_minor_version(baseline_full)
     target_minor = extract_minor_version(target_full)
@@ -592,31 +496,39 @@ Exit Codes:
         log_info("Dry-run mode enabled - exiting without performing analysis")
         sys.exit(0)
 
+    # Determine GA status and 5.x platform constraints
+    ga_dates = fetch_sippy_ga_dates()
+    baseline_is_ga = is_ga_minor_version(baseline_minor, ga_dates)
+    target_is_ga = is_ga_minor_version(target_minor, ga_dates)
+    baseline_channels = GA_CHANNELS if baseline_is_ga else PRE_GA_CHANNELS
+    target_channels = GA_CHANNELS if target_is_ga else PRE_GA_CHANNELS
+    skip_gcp_baseline = is_version_5x(baseline_minor)
+    skip_gcp_target = is_version_5x(target_minor)
+
+    log_info(f"Baseline {baseline_minor} GA status: {'GA' if baseline_is_ga else 'pre-GA'} → channels: {baseline_channels}")
+    log_info(f"Target {target_minor} GA status: {'GA' if target_is_ga else 'pre-GA'} → channels: {target_channels}")
+    if skip_gcp_baseline:
+        log_info(f"Baseline {baseline_minor} is 5.x — OSD GCP skipped (AWS/STS-only)")
+    if skip_gcp_target:
+        log_info(f"Target {target_minor} is 5.x — OSD GCP skipped (AWS/STS-only)")
+
     # Run analyses
     log_info("\nAnalyzing channel availability...")
     channel_analysis = analyze_channel_availability(
-        baseline_minor, target_minor, baseline_full, target_full
+        baseline_minor, target_minor, baseline_full, target_full,
+        baseline_channels=baseline_channels, target_channels=target_channels
     )
-
-    log_info("\nComparing accepted streams with channel data...")
-    accepted_analysis = analyze_accepted_vs_channels(target_minor)
-
-    log_info("\nAnalyzing upgrade paths...")
-    upgrade_analysis = analyze_upgrade_paths(
-        baseline_minor, target_minor, baseline_full, target_full
-    )
-
-    log_info("\nChecking cross-source consistency...")
-    consistency_analysis = analyze_cross_source_consistency(baseline_minor, target_minor)
 
     log_info("\nChecking marketplace availability...")
     marketplace_analysis = analyze_marketplace_availability(
-        baseline_minor, target_minor, baseline_full, target_full
+        baseline_minor, target_minor, baseline_full, target_full,
+        skip_gcp_baseline=skip_gcp_baseline, skip_gcp_target=skip_gcp_target,
+        baseline_channels=baseline_channels, target_channels=target_channels
     )
 
     # Print results
     print_analysis(
-        channel_analysis, accepted_analysis, upgrade_analysis, consistency_analysis,
+        channel_analysis,
         baseline_full, target_full, args.verbose, marketplace_analysis
     )
 
@@ -627,15 +539,49 @@ Exit Codes:
 
     # Collect API errors from all analyses
     api_errors = []
-    for analysis in [channel_analysis, accepted_analysis, upgrade_analysis]:
+    for analysis in [channel_analysis]:
         api_errors.extend(analysis.get('api_errors', []))
 
     if api_errors:
-        log_warning(f"{len(api_errors)} Cincinnati API call(s) failed — results may be incomplete:")
+        log_warning(f"{len(api_errors)} OCM API call(s) failed — results may be incomplete:")
         for err in api_errors:
             log_warning(f"  - {err}")
 
+    # Determine validation result based on channel availability and marketplace
     validation_result = 'PASS'
+    target_in_channel = len(channel_analysis['target_version_channels']) > 0
+
+    if not target_in_channel and (target_is_ga or baseline_is_ga):
+        validation_result = 'FAIL'
+        log_error(f"Target {target_full} not found in any {target_minor} channel (next version after GA — must be available)")
+    elif not target_in_channel:
+        log_warning(f"Target {target_full} not found in any {target_minor} channel (dev version — informational only)")
+
+    # Marketplace validation for GA targets:
+    #   ROSA HCP:     missing → FAIL (mandatory, all versions)
+    #   ROSA Classic: missing → FAIL (4.x), WARN (5.x)
+    #   OSD GCP:      missing → FAIL (4.x only, skipped for 5.x)
+    if target_is_ga:
+        if not marketplace_analysis['hcp']['target']['hcp_enabled']:
+            validation_result = 'FAIL'
+            log_error(f"Target {target_minor} not available for ROSA HCP (mandatory for GA)")
+
+        if marketplace_analysis.get('available'):
+            aws_enabled = marketplace_analysis['aws']['target']['rosa_enabled']
+            if not aws_enabled:
+                if skip_gcp_target:
+                    log_warning(f"Target {target_full} not enabled for ROSA Classic")
+                else:
+                    validation_result = 'FAIL'
+                    log_error(f"Target {target_full} not enabled for ROSA Classic (mandatory for GA 4.x)")
+
+            if not skip_gcp_target:
+                gcp_enabled = marketplace_analysis['gcp']['target']['gcp_marketplace_enabled']
+                if not gcp_enabled:
+                    validation_result = 'FAIL'
+                    log_error(f"Target {target_full} not enabled for OSD GCP (mandatory for GA 4.x)")
+        else:
+            log_warning("OCM not authenticated — cannot validate ROSA Classic and OSD GCP marketplace for GA version")
 
     report_data = {
         'type': 'Version Channel Gap Analysis',
@@ -647,24 +593,18 @@ Exit Codes:
         'timestamp': datetime.now().isoformat(),
         'validation_result': validation_result,
         'channel_availability': channel_analysis,
-        'accepted_vs_channels': accepted_analysis,
-        'upgrade_paths': upgrade_analysis,
-        'cross_source': consistency_analysis,
         'marketplace': marketplace_analysis,
         'summary': {
             'baseline_in_stable': channel_analysis['baseline_in_stable'],
             'target_highest_channel': channel_analysis['target_highest_channel'],
             'baseline_channels': channel_analysis['baseline_version_channels'],
             'target_channels': channel_analysis['target_version_channels'],
-            'accepted_not_in_channel': len(accepted_analysis['accepted_only']),
-            'total_upgrade_paths': upgrade_analysis['total_paths'],
-            'direct_path_exists': upgrade_analysis['direct_path_exists'],
-            'paths_from_baseline': upgrade_analysis['paths_from_baseline'],
-            'paths_to_target': upgrade_analysis['paths_to_target'],
-            'target_is_ga': consistency_analysis.get('target_is_ga', False),
+            'target_is_ga': target_is_ga,
             'marketplace_available': marketplace_analysis.get('available', False),
-            'target_aws_marketplace': marketplace_analysis['aws']['target']['rosa_enabled'] if marketplace_analysis.get('available') else None,
-            'target_gcp_marketplace': marketplace_analysis['gcp']['target']['gcp_marketplace_enabled'] if marketplace_analysis.get('available') else None,
+            'target_rosa_classic': marketplace_analysis['aws']['target']['rosa_enabled'] if marketplace_analysis.get('available') else None,
+            'target_rosa_hcp': marketplace_analysis['hcp']['target']['hcp_enabled'],
+            'target_osd_gcp': marketplace_analysis['gcp']['target']['gcp_marketplace_enabled'] if marketplace_analysis.get('available') and not skip_gcp_target else None,
+            'gcp_skipped': skip_gcp_target,
             'api_errors': api_errors,
         }
     }
@@ -688,71 +628,72 @@ Exit Codes:
         generate_html_report(report_data, html_file)
         log_info(f"HTML report generated: {html_file}")
 
-    # Always pass (informational only)
-    log_success("=" * 60)
-    log_success("✓ VALIDATION PASSED - Versions & Channels (Informational)")
-    log_success("=" * 60)
-    log_success(f"\nCHECK #6: Versions & Channels Analysis [PASS]")
-    log_success(f"  Data Sources: Cincinnati API, Accepted Streams, Sippy")
+    log_fn = log_success if validation_result == 'PASS' else log_error
+
+    log_fn("=" * 60)
+    if validation_result == 'PASS':
+        log_fn("✓ VALIDATION PASSED - Versions & Channels")
+    else:
+        log_fn("✗ VALIDATION FAILED - Versions & Channels")
+    log_fn("=" * 60)
+    log_fn(f"\nCHECK #6: Versions & Channels Analysis [{validation_result}]")
+    log_fn(f"  Data Sources: OCM CLI, ROSA CLI, Sippy")
 
     if is_z_stream:
-        log_success(f"  Comparison Type: Z-stream ({baseline_full} → {target_full})")
+        log_fn(f"  Comparison Type: Z-stream ({baseline_full} → {target_full})")
     else:
-        log_success(f"  Comparison Type: Cross-minor ({baseline_minor} → {target_minor})")
+        log_fn(f"  Comparison Type: Cross-minor ({baseline_minor} → {target_minor})")
 
     if channel_analysis['baseline_in_stable']:
-        log_success(f"  ✓ Baseline {baseline_full} is in stable channel")
+        log_fn(f"  ✓ Baseline {baseline_full} is in stable channel")
     else:
-        log_success(f"  ℹ️  Baseline {baseline_full} not in stable (channels: {', '.join(channel_analysis['baseline_version_channels']) or 'none'})")
+        log_fn(f"  ℹ️  Baseline {baseline_full} not in stable (channels: {', '.join(channel_analysis['baseline_version_channels']) or 'none'})")
 
-    log_success(f"  ℹ️  Target {target_full} highest channel: {channel_analysis['target_highest_channel']}")
-
-    if upgrade_analysis['total_paths'] > 0:
-        log_success(f"  ✓ {upgrade_analysis['total_paths']} upgrade path(s) available")
+    if target_in_channel:
+        log_fn(f"  ✓ Target {target_full} highest channel: {channel_analysis['target_highest_channel']}")
     else:
-        log_success(f"  ℹ️  No upgrade paths found in {upgrade_analysis['channel_queried']}")
+        log_fn(f"  ✗ Target {target_full} not found in any {target_minor} channel")
 
-    if accepted_analysis['accepted_only']:
-        log_success(f"  ℹ️  {len(accepted_analysis['accepted_only'])} version(s) accepted but not yet in channels")
+    hcp_status = marketplace_analysis['hcp']['target']['hcp_enabled']
+    log_fn(f"  {'✓' if hcp_status else '✗'} ROSA HCP: {'available' if hcp_status else 'NOT available'}")
 
     if marketplace_analysis.get('available'):
         aws_status = marketplace_analysis['aws']['target']['rosa_enabled']
-        gcp_status = marketplace_analysis['gcp']['target']['gcp_marketplace_enabled']
         if aws_status is not None:
-            log_success(f"  {'✓' if aws_status else '⚠️ '} AWS Marketplace (ROSA): {'available' if aws_status else 'NOT available'}")
-        if gcp_status is not None:
-            log_success(f"  {'✓' if gcp_status else '⚠️ '} GCP Marketplace: {'available' if gcp_status else 'NOT available'}")
+            log_fn(f"  {'✓' if aws_status else '✗'} ROSA Classic: {'available' if aws_status else 'NOT available'}")
+        if not skip_gcp_target:
+            gcp_status = marketplace_analysis['gcp']['target']['gcp_marketplace_enabled']
+            if gcp_status is not None:
+                log_fn(f"  {'✓' if gcp_status else '✗'} OSD GCP: {'available' if gcp_status else 'NOT available'}")
+        else:
+            log_fn(f"  ⊘ OSD GCP: skipped (5.x is AWS/STS-only)")
 
-    log_success("")
-    log_success(f"✅ PASSED - Version & Channel analysis complete (informational)")
+    log_fn("")
+    if validation_result == 'PASS':
+        log_fn(f"✅ PASSED - Version & Channel analysis complete")
+    else:
+        log_fn(f"❌ FAILED - Target version not available in any channel")
 
     # Generate status file for gap-all.sh
-    accepted_not_in_channel = len(accepted_analysis['accepted_only'])
-    if accepted_not_in_channel > 0:
-        status_message = f"{accepted_not_in_channel} accepted-only, {upgrade_analysis['total_paths']} upgrade paths"
-    else:
-        status_message = f"{upgrade_analysis['total_paths']} upgrade paths"
-
     status_details = {
         "is_z_stream": is_z_stream,
-        "accepted_not_in_channel": accepted_not_in_channel,
-        "total_upgrade_paths": upgrade_analysis['total_paths'],
-        "direct_path_exists": upgrade_analysis['direct_path_exists'],
         "baseline_in_stable": channel_analysis['baseline_in_stable'],
         "target_highest_channel": channel_analysis['target_highest_channel'],
         "marketplace_available": marketplace_analysis.get('available', False),
-        "message": status_message
+        "gcp_skipped": skip_gcp_target,
+        "target_is_ga": target_is_ga,
+        "message": f"target highest channel: {channel_analysis['target_highest_channel']}"
     }
 
     generate_status_report(
         check_number=6,
         check_name="Versions & Channels",
-        status="PASS",
+        status=validation_result,
         details=status_details,
         report_dir=report_dir
     )
 
-    sys.exit(0)
+    sys.exit(1 if validation_result == 'FAIL' else 0)
 
 
 if __name__ == '__main__':
