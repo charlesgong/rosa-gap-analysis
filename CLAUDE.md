@@ -42,7 +42,7 @@ Claude follows an impact-based approach in this repository:
 ## Architecture
 
 **3-Layer Design:**
-1. Individual analyzers (`scripts/gap-*.py`) - AWS STS, GCP WIF, Feature Gates, OCP Admin Gates
+1. Individual analyzers (`scripts/gap-*.py`) - AWS STS, GCP WIF, OCP Admin Gates, Versions & Channels, OCM Version Gate, Feature Gates
 2. Orchestrator (`scripts/gap-all.sh`) - Runs all analyzers, generates combined reports
 3. Shared libraries (`scripts/lib/`, `ci/lib/`) - Version resolution, validation, reporting, CI utilities
 
@@ -50,13 +50,18 @@ Claude follows an impact-based approach in this repository:
 - `oc adm release extract --credentials-requests` → extracts CredentialsRequest manifests from OCP releases
 - Sippy API → feature gate data and version resolution
 - `managed-cluster-config` GitHub repo → validates policy files and acknowledgments
+- OCM CLI (`ocm`) → channel data, ROSA Classic marketplace availability, version gate information (optional, graceful fallback)
+- ROSA CLI (`rosa`) → ROSA HCP and OSD GCP marketplace availability (optional, graceful fallback)
 
 **Key Patterns:**
-- **Exit codes**: Exit 0 on successful execution even when differences found; exit 1 only on execution errors
+- **Exit codes**: Checks 1-7 exit 1 on validation FAIL; CHECK #8 (Feature Gates) exits 0 even when differences found (informational only); all scripts exit 1 on execution errors
 - **Version resolution**: CLI flags > env vars > auto-detect (Sippy API)
 - **Reports**: All scripts generate HTML/JSON simultaneously using Jinja2 templates
 - **Validation**: 8 globally numbered checks; checks 1-7 are standard (can FAIL); CHECK #8 (Feature Gates) is informational only and always executes last
 - **GA Readiness Validation**: Standalone script (`scripts/prod/gap-ga-validation.py`) for SREs to run manually; not part of CI pipeline
+- **5.x is AWS/STS-only**: All GCP/WIF checks are skipped for 5.x+ targets. Use `is_version_5x()` from `common.py`. OSD GCP skip is **per-version** (a 4.x baseline still gets GCP checked even when target is 5.x). Applies to `gap-gcp-wif.py`, `gap-ocm-version-gate.py`, `gap-versions-channels.py`, and `gap-ga-validation.py`
+- **GA-aware channel checking**: `gap-versions-channels.py` checks all channels (candidate, fast, stable, eus) for GA versions but only candidate for pre-GA. This applies to both channel availability AND marketplace checks. Channel availability FAILs for GA or next-after-GA targets, WARNs for further-out dev versions
+- **Marketplace validation**: Three categories — **ROSA Classic** (OCM API `rosa_enabled`), **ROSA HCP** (`rosa list versions --hosted-cp`), **OSD GCP** (OCM API `gcp_marketplace_enabled`, 4.x only, skipped per-version for 5.x). GA severity: ROSA HCP → FAIL (all), ROSA Classic → FAIL (4.x) / WARN (5.x), OSD GCP → FAIL (4.x only). Non-GA is informational only
 
 ## Essential Commands
 
@@ -110,11 +115,11 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 |---------|--------|-----------|--------------|
 | **1** | gap-aws-sts.py | AWS STS policy files in `resources/sts/{version}/` match OCP release (per-file comparison) | Yes |
 | **2** | gap-aws-sts.py | AWS acknowledgment files in `deploy/osd-cluster-acks/sts/{version}/` | Yes |
-| **3** | gap-gcp-wif.py | GCP WIF templates in `resources/wif/{version}/` match OCP release (per-file comparison) | Yes |
-| **4** | gap-gcp-wif.py | GCP acknowledgment files in `deploy/osd-cluster-acks/wif/{version}/` | Yes |
+| **3** | gap-gcp-wif.py | GCP WIF templates in `resources/wif/{version}/` match OCP release (per-file comparison). **Skipped for 5.x+ targets (AWS/STS-only).** | Yes |
+| **4** | gap-gcp-wif.py | GCP acknowledgment files in `deploy/osd-cluster-acks/wif/{version}/`. **Skipped for 5.x+ targets.** | Yes |
 | **5** | gap-ocp-gate-ack.py | OCP admin gate acknowledgments in `deploy/osd-cluster-acks/ocp/{version}/` (conditional: if gates exist, both config.yaml + acknowledgment file required; if no gates, both files must be absent OR both files present with warning). **Acknowledgment file**: admin-ack.yaml OR admin-gates.yaml (either acceptable). **Check order**: acknowledgment file first, then config.yaml. If only one file present when no gates exist, validation fails. **Z-stream behavior**: For z-stream upgrades (e.g., 4.19.30 → 4.19.31), validates gates from 4.19 against acknowledgments in 4.20 (next minor) to detect if a z-stream adds a new gate. | Yes |
-| **6** | gap-versions-channels.py | Version availability across OCM channels (candidate/fast/stable), AWS/GCP marketplace availability (via OCM API), upgrade path existence, accepted-vs-channel comparison, cross-source consistency. | Yes |
-| **7** | gap-ocm-version-gate.py | OCM version gate existence, configurations, and metadata for target OCP versions (compared against baseline version gates). Fallback gracefully if OCM offline token / CLI is absent. | Yes |
+| **6** | gap-versions-channels.py | Version availability across OCM channels (candidate/fast/stable/eus for GA, candidate-only for pre-GA), marketplace: ROSA Classic (OCM API, FAIL 4.x / WARN 5.x), ROSA HCP (`rosa` CLI, FAIL), OSD GCP (OCM API, FAIL, **4.x only, skipped for 5.x+**). Channel FAIL: GA or next-after-GA target not in any channel. | Yes |
+| **7** | gap-ocm-version-gate.py | OCM version gate existence, configurations, and metadata for target OCP versions (compared against baseline version gates). **WIF gate excluded from comparison for 5.x+ targets.** Fallback gracefully if OCM offline token / CLI is absent. | Yes |
 | **8** | gap-feature-gates.py | Feature gate changes (Info only, always executed last). **Z-stream behavior**: When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences. | No |
 
 **Standalone (not in CI pipeline):**
@@ -169,7 +174,7 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 ```python
 sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 from common import log_info, log_success, log_error
-from openshift_releases import resolve_openshift_version, extract_minor_version
+from openshift_releases import resolve_gap_versions, extract_minor_version
 from reporters import generate_html_report, generate_json_report
 ```
 
@@ -254,11 +259,12 @@ from reporters import generate_html_report, generate_json_report
 - Common variables: `type`, `baseline`, `target`, `timestamp`, `comparison`, `validation`
 - Test by running corresponding script
 
-**Shared libraries:**
-- `common.py` - Logging, color codes, command checks, project root detection
-- `openshift_releases.py` - Version resolution, Sippy queries, minor version extraction
+**Shared libraries (scripts without `main()` live in `scripts/lib/`, not `scripts/`):**
+- `common.py` - Logging, color codes, command checks, project root detection, `is_pre_ga_version()`, `is_version_5x()`
+- `openshift_releases.py` - Version resolution, Sippy queries, minor version extraction, `is_ga_minor_version()`
 - `reporters.py` - Multi-format report generation
 - `ack_validation.py` - managed-cluster-config validation logic
+- `marketplace.py` - AWS/GCP marketplace enablement checks (used by gap-aws-sts, gap-gcp-wif, gap-ga-validation)
 - `logging.sh` - Bash logging functions
 - `openshift-releases.sh` - Bash version resolution (includes `resolve_openshift_version()`, `get_latest_version_for_line()`, `get_previous_z_stream_version()`, `get_all_minor_versions_from_accepted_streams()`)
 - `ci/lib/failure-parser.sh` - CI-specific Prow failure parsing utilities
@@ -274,6 +280,8 @@ from reporters import generate_html_report, generate_json_report
 - `curl` (Sippy API)
 - `jq` (bash JSON parsing)
 - `gh` (GitHub CLI - optional fallback for PR link detection if GH_TOKEN set)
+- `rosa` (ROSA CLI - ROSA HCP and OSD GCP marketplace checks; optional with graceful fallback)
+- `ocm` (OCM CLI - ROSA Classic marketplace, channel data, version gates; optional with graceful fallback)
 
 **CI/failure analysis:**
 - `gcloud` (GCS artifact downloads via `gcloud storage cp`)

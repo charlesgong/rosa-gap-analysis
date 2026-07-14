@@ -27,6 +27,13 @@ def fetch_sippy_ga_dates():
         sys.exit(1)
 
 
+def is_ga_minor_version(minor_version, ga_dates=None):
+    """Check if a minor version is GA according to Sippy API."""
+    if ga_dates is None:
+        ga_dates = fetch_sippy_ga_dates()
+    return minor_version in ga_dates
+
+
 def get_latest_ga_version():
     """Get the latest GA version from Sippy API."""
     ga_dates = fetch_sippy_ga_dates()
@@ -91,14 +98,14 @@ def get_latest_candidate_version(dev_version=None):
     """
     Get the latest candidate OpenShift version using dual-source priority from accepted streams.
 
-    Priority 1: Check 4-stable for RC version (e.g., 4.22.0-rc.*)
-    Priority 2: Fall back to 4-dev-preview for EC version (e.g., 4.22.0-ec.*)
+    Priority 1: Check {major}-stable for RC version (e.g., 4.22.0-rc.*, 5.0.0-rc.*)
+    Priority 2: Fall back to {major}-dev-preview for EC version (e.g., 4.22.0-ec.*, 5.0.0-ec.*)
 
     Args:
-        dev_version: Dev version line to search for (e.g., "4.22"). If None, auto-calculates from GA+1.
+        dev_version: Dev version line to search for (e.g., "4.22", "5.0"). If None, auto-calculates from GA+1.
 
     Returns:
-        Latest candidate version (RC from 4-stable or EC from 4-dev-preview)
+        Latest candidate version (RC from stable or EC from dev-preview)
     """
     if dev_version is None:
         ga_version = get_latest_ga_version()
@@ -106,27 +113,30 @@ def get_latest_candidate_version(dev_version=None):
         dev_minor = int(parts[1]) + 1
         dev_version = f"{parts[0]}.{dev_minor}"
 
+    major = dev_version.split('.')[0]
+    stable_stream = f"{major}-stable"
+    dev_preview_stream = f"{major}-dev-preview"
+
     # Fetch accepted streams (single API call)
     streams = fetch_accepted_streams()
 
-    # Priority 1: Check 4-stable for RC version (e.g., 4.22.0-rc.*)
-    stable_versions = streams.get(STABLE_STREAM, [])
+    # Priority 1: Check {major}-stable for RC version (e.g., 5.0.0-rc.*)
+    stable_versions = streams.get(stable_stream, []) or []
     rc_versions = [v for v in stable_versions if v.startswith(f"{dev_version}.0-rc.")]
 
     if rc_versions:
-        # Found RC in 4-stable, return it (already sorted newest first)
         return rc_versions[0]
 
-    # Priority 2: Check 4-dev-preview for EC version (e.g., 4.22.0-ec.*)
-    dev_versions = streams.get(DEV_PREVIEW_STREAM, [])
+    # Priority 2: Check {major}-dev-preview for EC version (e.g., 5.0.0-ec.*)
+    dev_versions = streams.get(dev_preview_stream, []) or []
     ec_versions = [v for v in dev_versions if v.startswith(f"{dev_version}.0-ec.")]
 
     if ec_versions:
-        # Found EC in 4-dev-preview, return it (already sorted newest first)
         return ec_versions[0]
 
     # No RC or EC found
-    log_error(f"No candidate version found for {dev_version} (checked RC in 4-stable and EC in 4-dev-preview)")
+    log_error(f"No candidate version found for {dev_version} "
+              f"(checked RC in {stable_stream} and EC in {dev_preview_stream})")
     sys.exit(1)
 
 
@@ -396,6 +406,93 @@ def get_special_baseline_mapping(target_version):
     }
 
     return special_mappings.get(target_version)
+
+
+def get_special_target_mapping(baseline_version):
+    """
+    Get special target version mapping for major version transitions.
+    Inverse of get_special_baseline_mapping.
+
+    Args:
+        baseline_version: Baseline minor version (e.g., "4.22", "4.23")
+
+    Returns:
+        str: Special target version if mapping exists, None otherwise
+    """
+    special_mappings = {
+        "4.22": "5.0",
+        "4.23": "5.1"
+    }
+
+    return special_mappings.get(baseline_version)
+
+
+def resolve_gap_versions(version=None, baseline=None, target=None):
+    """
+    Unified version resolution for all gap analysis scripts.
+
+    Handles all resolution paths including special baseline→target mappings
+    (e.g., 4.22 → 5.0) so individual scripts don't need to duplicate this logic.
+
+    Precedence:
+      1. --version (or OPENSHIFT_VERSION env) → resolve_openshift_version()
+      2. --baseline + --target → used directly
+      3. --baseline only → apply special target mapping if available, else error
+      4. No args → auto-detect via resolve_baseline_version() + resolve_target_version()
+
+    Args:
+        version: Single version to resolve (--version flag or OPENSHIFT_VERSION env)
+        baseline: Explicit baseline version (--baseline flag)
+        target: Explicit target version (--target flag)
+
+    Returns:
+        tuple: (baseline_version, target_version)
+    """
+    openshift_version = version or __import__('os').environ.get('OPENSHIFT_VERSION')
+
+    if openshift_version:
+        log_info(f"Resolving baseline and target from version: {openshift_version}")
+        baseline_full, target_full = resolve_openshift_version(openshift_version)
+        if not baseline_full or not target_full:
+            log_error(f"Failed to resolve versions from: {openshift_version}")
+            sys.exit(1)
+    elif baseline and target:
+        if baseline.count('.') == 1:
+            baseline_full = get_latest_version_baseline_priority(baseline)
+            log_info(f"Resolved baseline {baseline} → {baseline_full}")
+        else:
+            baseline_full = baseline
+        if target.count('.') == 1:
+            target_full = get_latest_version_target_priority(target)
+            log_info(f"Resolved target {target} → {target_full}")
+        else:
+            target_full = target
+    elif baseline and not target:
+        baseline_minor = extract_minor_version(baseline)
+        if baseline.count('.') == 1:
+            baseline_full = get_latest_version_baseline_priority(baseline_minor)
+            log_info(f"Resolved baseline {baseline} → {baseline_full}")
+        else:
+            baseline_full = baseline
+        special_target = get_special_target_mapping(baseline_minor)
+        if special_target:
+            log_info(f"Using special target mapping: baseline {baseline_minor} → target {special_target}")
+            target_full = get_latest_version_target_priority(special_target)
+        else:
+            log_error("--target is required when --baseline is specified "
+                      f"(no default target mapping for {baseline_minor})")
+            sys.exit(1)
+    else:
+        baseline_full = resolve_baseline_version()
+        baseline_minor = extract_minor_version(baseline_full)
+        special_target = get_special_target_mapping(baseline_minor)
+        if special_target:
+            log_info(f"Applying special target mapping: baseline {baseline_minor} → target {special_target}")
+            target_full = get_latest_version_target_priority(special_target)
+        else:
+            target_full = resolve_target_version()
+
+    return (baseline_full, target_full)
 
 
 def resolve_openshift_version(openshift_version):

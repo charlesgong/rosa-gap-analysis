@@ -428,7 +428,9 @@
             {% endif %}
 
             {% if versions_channels %}
-                {% if versions_channels.validation_result == 'PASS' %}
+                {% if versions_channels.validation_result == 'FAIL' %}
+                    {% set critical_count = critical_count + 1 %}
+                {% elif versions_channels.validation_result == 'PASS' %}
                     {% set success_count = success_count + 1 %}
                 {% endif %}
                 {% set info_count = info_count + 1 %}
@@ -614,16 +616,17 @@
                     {% if versions_channels %}
                     <tr>
                         <td><strong>CHECK #6:</strong> Versions & Channels</td>
-                        <td><span class="added">✅ PASS</span></td>
-                        <td style="text-align: center;">{{ versions_channels.summary.accepted_not_in_channel }}</td>
+                        <td>{% if versions_channels.validation_result == 'FAIL' %}<span class="removed">❌ FAIL</span>{% else %}<span class="added">✅ PASS</span>{% endif %}</td>
+                        <td style="text-align: center;">-</td>
                         <td style="text-align: center;">-</td>
                         <td>
-                            {% if versions_channels.summary.total_upgrade_paths > 0 %}
-                            {{ versions_channels.summary.total_upgrade_paths }} upgrade paths
-                            {% else %}-{% endif %}
+                            {{ versions_channels.summary.target_highest_channel or 'none' }}
+                            {% if versions_channels.summary.target_rosa_hcp is defined %}
+                            | HCP: {% if versions_channels.summary.target_rosa_hcp %}✓{% else %}✗{% endif %}
+                            {% endif %}
                             {% if versions_channels.summary.marketplace_available %}
-                            | AWS: {% if versions_channels.summary.target_aws_marketplace %}✓{% else %}✗{% endif %}
-                            GCP: {% if versions_channels.summary.target_gcp_marketplace %}✓{% else %}✗{% endif %}
+                            | Classic: {% if versions_channels.summary.target_rosa_classic %}✓{% else %}✗{% endif %}
+                            {% if not versions_channels.summary.gcp_skipped %}| OSD GCP: {% if versions_channels.summary.target_osd_gcp %}✓{% else %}✗{% endif %}{% endif %}
                             {% endif %}
                         </td>
                     </tr>
@@ -645,7 +648,8 @@
                             {% if ocm_version_gate.is_mock_data %}
                             <span class="changed">⚠️ Mock Data Mode</span>
                             {% else %}
-                            Active gates: {{ ocm_version_gate.gates_count.target }} (target) / {{ ocm_version_gate.gates_count.baseline }} (baseline)
+                            Common: {{ ocm_version_gate.comparison.common_gates_count }} |
+                            Active: {{ ocm_version_gate.gates_count.target }} (target) / {{ ocm_version_gate.gates_count.baseline }} (baseline)
                             {% endif %}
                         </td>
                     </tr>
@@ -1055,15 +1059,12 @@
             {% if versions_channels %}
             <h2 id="versions-channels">CHECK #6: Versions & Channels</h2>
 
-            <div class="alert success">
-                <strong>✅ Informational Analysis</strong>
+            <div class="alert {% if versions_channels.validation_result == 'FAIL' %}error{% else %}success{% endif %}">
+                <strong>{% if versions_channels.validation_result == 'FAIL' %}❌ Validation FAILED{% else %}✅ Validation PASSED{% endif %}</strong>
                 <ul style="margin: 10px 0 0 0; padding-left: 20px;">
                     <li><strong>Baseline {{ versions_channels.baseline }}:</strong> channels: {{ versions_channels.summary.baseline_channels|join(', ') or 'none' }}</li>
                     <li><strong>Target {{ versions_channels.target }}:</strong> highest channel: {{ versions_channels.summary.target_highest_channel }}</li>
-                    <li><strong>Upgrade paths:</strong> {{ versions_channels.summary.total_upgrade_paths }}{% if versions_channels.summary.direct_path_exists %} (direct path exists){% endif %}</li>
-                    {% if versions_channels.summary.accepted_not_in_channel > 0 %}
-                    <li><strong>{{ versions_channels.summary.accepted_not_in_channel }}</strong> version(s) accepted in CI but not in any channel</li>
-                    {% endif %}
+                    <li><strong>Target GA status:</strong> {% if versions_channels.summary.target_is_ga %}GA{% else %}Pre-GA{% endif %}</li>
                 </ul>
             </div>
 
@@ -1073,8 +1074,7 @@
                     <tr><th>Channel</th><th>Available</th><th>Versions</th><th>Contains Target</th></tr>
                 </thead>
                 <tbody>
-                    {% for ch in ['candidate', 'fast', 'stable'] %}
-                    {% set info = versions_channels.channel_availability.target.channels.get(ch, {}) %}
+                    {% for ch, info in versions_channels.channel_availability.target.channels.items() %}
                     <tr>
                         <td><strong>{{ ch }}-{{ versions_channels.target_minor }}</strong></td>
                         <td>{% if info.get('available') %}<span class="added">Yes</span>{% else %}<span class="removed">No</span>{% endif %}</td>
@@ -1085,16 +1085,41 @@
                 </tbody>
             </table>
 
+            <h3>Marketplace Availability</h3>
+
+            {% if versions_channels.marketplace is defined and versions_channels.marketplace.hcp is defined %}
+            <h4>ROSA HCP (via ROSA CLI)</h4>
+            <table>
+                <thead>
+                    <tr><th>Version</th><th style="text-align: center;">HCP Available</th><th>Channels</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Baseline:</strong> {{ versions_channels.baseline_minor }}</td>
+                        <td style="text-align: center;">{% if versions_channels.marketplace.hcp.baseline.hcp_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                        <td>{{ versions_channels.marketplace.hcp.baseline.channels | join(', ') or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Target:</strong> {{ versions_channels.target_minor }}</td>
+                        <td style="text-align: center;">{% if versions_channels.marketplace.hcp.target.hcp_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                        <td>{{ versions_channels.marketplace.hcp.target.channels | join(', ') or '-' }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            {% endif %}
+
             {% if versions_channels.marketplace is defined and versions_channels.marketplace.available %}
             {% set mp = versions_channels.marketplace %}
             {% set mp_versions = mp.aws.target_minor_versions %}
+
+            <h4>ROSA Classic (via OCM API)</h4>
 
             {# ─── Build per-channel summary ─── #}
             {% set ns = namespace(channels={}) %}
             {% for v in mp_versions %}
             {% set ch = v.channel_group %}
             {% if ch not in ns.channels %}
-            {% set _ = ns.channels.update({ch: {'rosa_classic': 0, 'rosa_hcp': 0, 'gcp': 0, 'total': 0, 'latest': v.version}}) %}
+            {% set _ = ns.channels.update({ch: {'rosa_classic': 0, 'rosa_hcp': 0, 'total': 0, 'latest': v.version}}) %}
             {% endif %}
             {% set _ = ns.channels[ch].update({'total': ns.channels[ch].total + 1}) %}
             {% if v.version > ns.channels[ch].latest %}
@@ -1106,13 +1131,10 @@
             {% if v.hosted_control_plane_enabled %}
             {% set _ = ns.channels[ch].update({'rosa_hcp': ns.channels[ch].rosa_hcp + 1}) %}
             {% endif %}
-            {% if v.gcp_marketplace_enabled %}
-            {% set _ = ns.channels[ch].update({'gcp': ns.channels[ch].gcp + 1}) %}
-            {% endif %}
             {% endfor %}
 
-            {# ─── Build per-channel latest version for ROSA Classic and HCP (strip channel suffix) ─── #}
-            {% set ns2 = namespace(classic={}, hcp={}) %}
+            {# ─── Build per-channel latest version for ROSA Classic (strip channel suffix) ─── #}
+            {% set ns2 = namespace(classic={}) %}
             {% for v in mp_versions %}
             {% set ch = v.channel_group %}
             {% set clean_ver = v.version.replace('-' ~ ch, '') %}
@@ -1121,39 +1143,29 @@
             {% set _ = ns2.classic.update({ch: clean_ver}) %}
             {% endif %}
             {% endif %}
-            {% if v.hosted_control_plane_enabled %}
-            {% if ch not in ns2.hcp or clean_ver > ns2.hcp[ch] %}
-            {% set _ = ns2.hcp.update({ch: clean_ver}) %}
-            {% endif %}
-            {% endif %}
             {% endfor %}
 
-            <h3>AWS Marketplace Enablement</h3>
             <table>
                 <thead>
                     <tr>
                         <th>Channel</th>
                         <th style="text-align: center;">ROSA Classic</th>
-                        <th style="text-align: center;">ROSA HCP</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for ch in ['stable', 'fast', 'candidate'] %}
-                    {% if ch in ns.channels %}
-                    {% set c = ns.channels[ch] %}
+                    {% for ch in ns.channels %}
                     <tr>
                         <td><strong>{{ ch }}</strong></td>
                         <td style="text-align: center;">{% if ch in ns2.classic %}<span class="added">✓</span> <span style="font-family: monospace; font-size: 0.9em;">{{ ns2.classic[ch] }}</span>{% else %}<span class="removed">✗</span> —{% endif %}</td>
-                        <td style="text-align: center;">{% if ch in ns2.hcp %}<span class="added">✓</span> <span style="font-family: monospace; font-size: 0.9em;">{{ ns2.hcp[ch] }}</span>{% else %}<span class="removed">✗</span> —{% endif %}</td>
                     </tr>
-                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
 
-            {# ─── Build per-channel latest version for GCP (strip channel suffix from version ID) ─── #}
+            {% if not versions_channels.summary.gcp_skipped %}
+            {# ─── Build per-channel latest version for OSD GCP (strip channel suffix) ─── #}
             {% set ns3 = namespace(gcp={}) %}
-            {% for v in mp_versions %}
+            {% for v in mp.gcp.target_minor_versions %}
             {% set ch = v.channel_group %}
             {% if v.gcp_marketplace_enabled %}
             {% set clean_ver = v.version.replace('-' ~ ch, '') %}
@@ -1163,46 +1175,50 @@
             {% endif %}
             {% endfor %}
 
-            <h3>GCP Marketplace Enablement</h3>
+            <h4>OSD GCP Marketplace Enablement</h4>
             <table>
                 <thead>
                     <tr>
                         <th>Channel</th>
-                        <th style="text-align: center;">GCP Marketplace</th>
+                        <th style="text-align: center;">OSD GCP</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for ch in ['stable', 'fast', 'candidate'] %}
-                    {% if ch in ns.channels %}
+                    {% for ch in ns.channels %}
                     <tr>
                         <td><strong>{{ ch }}</strong></td>
                         <td style="text-align: center;">{% if ch in ns3.gcp %}<span class="added">✓</span> <span style="font-family: monospace; font-size: 0.9em;">{{ ns3.gcp[ch] }}</span>{% else %}<span class="removed">✗</span> —{% endif %}</td>
                     </tr>
-                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
+            {% else %}
+            <h4>OSD GCP Marketplace Enablement</h4>
+            <p><em>Skipped — 5.x is AWS/STS-only, OSD GCP not applicable</em></p>
+            {% endif %}
 
             <details>
                 <summary>Baseline / Target Version Details</summary>
                 <div class="content-wrapper">
                 <table>
                     <thead>
-                        <tr><th>Version</th><th style="text-align: center;">ROSA Classic</th><th style="text-align: center;">ROSA HCP</th><th style="text-align: center;">GCP Marketplace</th><th>Channel</th></tr>
+                        <tr><th>Version</th><th style="text-align: center;">ROSA Classic</th>{% if not versions_channels.summary.gcp_skipped %}<th style="text-align: center;">OSD GCP</th>{% endif %}<th>Channel</th></tr>
                     </thead>
                     <tbody>
                         <tr>
                             <td><strong>Baseline:</strong> {{ versions_channels.baseline }}</td>
                             <td style="text-align: center;">{% if mp.aws.baseline.rosa_enabled is none %}—{% elif mp.aws.baseline.rosa_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
-                            <td style="text-align: center;">—</td>
-                            <td style="text-align: center;">{% if mp.gcp.baseline.gcp_marketplace_enabled is none %}—{% elif mp.gcp.baseline.gcp_marketplace_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            {% if not versions_channels.summary.gcp_skipped %}
+                            <td style="text-align: center;">{% if mp.gcp.baseline.skipped %}⊘ skipped{% elif mp.gcp.baseline.gcp_marketplace_enabled is none %}—{% elif mp.gcp.baseline.gcp_marketplace_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            {% endif %}
                             <td>{{ mp.aws.baseline.channel_group or '-' }}</td>
                         </tr>
                         <tr>
                             <td><strong>Target:</strong> {{ versions_channels.target }}</td>
                             <td style="text-align: center;">{% if mp.aws.target.rosa_enabled is none %}—{% elif mp.aws.target.rosa_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
-                            <td style="text-align: center;">—</td>
-                            <td style="text-align: center;">{% if mp.gcp.target.gcp_marketplace_enabled is none %}—{% elif mp.gcp.target.gcp_marketplace_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            {% if not versions_channels.summary.gcp_skipped %}
+                            <td style="text-align: center;">{% if mp.gcp.target.skipped %}⊘ skipped{% elif mp.gcp.target.gcp_marketplace_enabled is none %}—{% elif mp.gcp.target.gcp_marketplace_enabled %}<span class="added">✓</span>{% else %}<span class="removed">✗</span>{% endif %}</td>
+                            {% endif %}
                             <td>{{ mp.aws.target.channel_group or '-' }}</td>
                         </tr>
                     </tbody>
@@ -1210,18 +1226,9 @@
                 </div>
             </details>
             {% elif versions_channels.marketplace is defined and not versions_channels.marketplace.available %}
-            <h3>Marketplace Availability</h3>
-            <p><em>Skipped — OCM not authenticated</em></p>
+            <p><em>ROSA Classic skipped — OCM not authenticated</em></p>
             {% endif %}
 
-            {% if versions_channels.cross_source.observations %}
-            <h3>Cross-Source Observations</h3>
-            <ul>
-                {% for obs in versions_channels.cross_source.observations %}
-                <li>{{ obs }}</li>
-                {% endfor %}
-            </ul>
-            {% endif %}
             {% endif %}
 
             {% if ocm_version_gate %}
@@ -1254,9 +1261,10 @@
                     <p style="margin: 5px 0;"><strong>Target Gates Count:</strong> <span class="badge {% if ocm_version_gate.gates_count.target > 0 %}success{% else %}error{% endif %}" style="padding: 2px 8px; border-radius: 3px; font-weight: bold;">{{ ocm_version_gate.gates_count.target }}</span></p>
                 </div>
                 <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; border-radius: 5px;">
-                    <h4 style="margin-top: 0; color: #495057;">Gate Changes</h4>
-                    <p style="margin: 5px 0;"><strong>New Gates Configured:</strong> <span style="font-weight: bold; color: #28a745;">{{ ocm_version_gate.comparison.new_gates_count }}</span></p>
-                    <p style="margin: 5px 0;"><strong>Deprecated/Old Gates:</strong> <span style="font-weight: bold; color: #dc3545;">{{ ocm_version_gate.comparison.deprecated_gates_count }}</span></p>
+                    <h4 style="margin-top: 0; color: #495057;">Gate Comparison (by label)</h4>
+                    <p style="margin: 5px 0;"><strong>Common Gates:</strong> <span style="font-weight: bold; color: #28a745;">{{ ocm_version_gate.comparison.common_gates_count }}</span></p>
+                    <p style="margin: 5px 0;"><strong>New Gates (Target Only):</strong> <span style="font-weight: bold; color: #007bff;">{{ ocm_version_gate.comparison.new_gates_count }}</span></p>
+                    <p style="margin: 5px 0;"><strong>Removed Gates (Baseline Only):</strong> <span style="font-weight: bold; color: #dc3545;">{{ ocm_version_gate.comparison.deprecated_gates_count }}</span></p>
                 </div>
             </div>
 

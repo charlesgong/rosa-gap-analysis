@@ -35,11 +35,12 @@ from common import (
     log_error,
     check_command,
     is_pre_ga_version,
+    is_version_5x,
 )
 from openshift_releases import resolve_openshift_version
 from reporters import generate_html_report, generate_json_report
 
-_marketplace = importlib.import_module("gap-marketplace")
+import marketplace as _marketplace
 _ocm_gate = importlib.import_module("gap-ocm-version-gate")
 _versions_channels = importlib.import_module("gap-versions-channels")
 
@@ -625,17 +626,26 @@ class GAReadinessValidator:
         log_info(f"Starting ROSA GA Readiness Validation for version {self.version}")
         log_info("=========================================")
 
+        major_minor = ".".join(self.version.split(".")[:2])
+        skip_gcp = is_version_5x(major_minor)
+
         all_checks = {
             "Channel Availability": self.check_channel_availability,
             "ROSA CLI Compatibility": self.check_rosa_cli_compatibility,
             "AWS Marketplace Enablement": self.check_aws_marketplace_enablement,
-            "GCP Marketplace Enablement": self.check_gcp_marketplace_enablement,
             "Version Gates": self.check_version_gates,
             "Upgrade Paths": self.check_upgrade_paths,
             "CI Job Status": self.check_ci_job_status,
             "SOP & Runbooks Update Status": self.check_documentation_status,
-            "GCP WIF Template Compatibility": self.check_gcp_wif_compatibility,
         }
+
+        if skip_gcp:
+            log_info("5.x detected — skipping GCP checks (AWS/STS-only)")
+            self.log_status("GCP Marketplace Enablement", "PASS", "Skipped — 5.x is AWS/STS-only")
+            self.log_status("GCP WIF Template Compatibility", "PASS", "Skipped — 5.x is AWS/STS-only")
+        else:
+            all_checks["GCP Marketplace Enablement"] = self.check_gcp_marketplace_enablement
+            all_checks["GCP WIF Template Compatibility"] = self.check_gcp_wif_compatibility
 
         for name, check_fn in all_checks.items():
             log_info(f"Executing: {check_fn.__doc__.strip().splitlines()[0]}...")

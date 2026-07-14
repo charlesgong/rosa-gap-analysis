@@ -71,9 +71,17 @@ def fetch_url(url, timeout=30):
 
 
 def is_pre_ga_version(version):
-    """Check if a version string is pre-GA (ec, rc, alpha, beta, nightly)."""
-    pre_ga_markers = ['-ec.', '-rc.', '-alpha.', '-beta.', '-nightly']
+    """Check if a version string is pre-GA (alpha, beta, nightly)."""
+    pre_ga_markers = ['-alpha.', '-beta.', '-nightly']
     return any(marker in version for marker in pre_ga_markers)
+
+
+def is_version_5x(minor_version):
+    """Check if minor version is 5.x or higher (AWS/STS-only, no GCP/WIF)."""
+    try:
+        return int(minor_version.split('.')[0]) >= 5
+    except (ValueError, IndexError):
+        return False
 
 
 def check_yaml_installed():

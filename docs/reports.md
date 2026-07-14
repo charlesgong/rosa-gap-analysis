@@ -31,7 +31,7 @@ gap-analysis-full_4.20_to_4.21_20260325_153500.json
 
 ## Individual Script Reports
 
-All reports follow the global 6-check validation system. See [Validation Checks](validation-checks.md) for details.
+All reports follow the global 8-check validation system. See [Validation Checks](validation-checks.md) for details.
 
 ### AWS STS Gap Analysis (Checks 1-2)
 
@@ -91,7 +91,40 @@ Generates:
 - config.yaml validation results
 - Timestamp and version information
 
-### Feature Gate Gap Analysis (Check 6 - Informational)
+### Versions & Channels Gap Analysis (Check 6)
+
+```bash
+python3 scripts/gap-versions-channels.py --baseline 4.20 --target 4.21
+```
+
+Generates:
+- `gap-analysis-versions-channels_4.20_to_4.21_YYYYMMDD_HHMMSS.html`
+- `gap-analysis-versions-channels_4.20_to_4.21_YYYYMMDD_HHMMSS.json`
+
+**Report Contents:**
+- **Check 6:** Versions & Channels validation results
+- Channel availability across OCM channels (candidate/fast/stable/eus)
+- Marketplace availability (ROSA Classic, ROSA HCP, OSD GCP)
+- Timestamp and version information
+
+### OCM Version Gate Gap Analysis (Check 7)
+
+```bash
+python3 scripts/gap-ocm-version-gate.py --baseline 4.20 --target 4.21
+```
+
+Generates:
+- `gap-analysis-ocm-version-gate_4.20_to_4.21_YYYYMMDD_HHMMSS.html`
+- `gap-analysis-ocm-version-gate_4.20_to_4.21_YYYYMMDD_HHMMSS.json`
+
+**Report Contents:**
+- **Check 7:** OCM Version Gates validation results
+- Gate configurations for baseline and target versions
+- New, common, and removed gates comparison
+- Configuration metadata validation
+- Timestamp and version information
+
+### Feature Gate Gap Analysis (Check 8 - Informational)
 
 ```bash
 python3 scripts/gap-feature-gates.py --baseline 4.20 --target 4.21
@@ -102,7 +135,7 @@ Generates:
 - `gap-analysis-feature-gates_4.20_to_4.21_YYYYMMDD_HHMMSS.json`
 
 **Report Contents:**
-- **Check 6:** Feature Gates analysis (informational only, always PASS)
+- **Check 8:** Feature Gates analysis (informational only, always PASS)
 - New feature gates
 - Removed feature gates
 - Newly enabled by default
@@ -110,7 +143,7 @@ Generates:
 - Total changes summary
 - Timestamp and version information
 
-## Combined Report (gap-all.sh) - All 6 Checks
+## Combined Report (gap-all.sh) - All 8 Checks
 
 When running the full gap analysis orchestrator:
 
@@ -123,13 +156,15 @@ bash scripts/gap-all.sh --baseline 4.20 --target 4.21
 - `gap-analysis-full_4.20_to_4.21_YYYYMMDD_HHMMSS.html`
 - `gap-analysis-full_4.20_to_4.21_YYYYMMDD_HHMMSS.json`
 
-**Combined Report Contents (All 6 Checks):**
+**Combined Report Contents (All 8 Checks):**
 - **Check 1:** AWS STS Resources validation
 - **Check 2:** AWS STS Admin Ack validation
 - **Check 3:** GCP WIF Resources validation
 - **Check 4:** GCP WIF Admin Ack validation
 - **Check 5:** OCP Admin Gates validation
-- **Check 6:** Feature Gates analysis (informational)
+- **Check 6:** Versions & Channels validation
+- **Check 7:** OCM Version Gates validation
+- **Check 8:** Feature Gates analysis (informational)
 - Aggregate statistics
 - Timestamp and version information
 
@@ -137,7 +172,9 @@ bash scripts/gap-all.sh --baseline 4.20 --target 4.21
 1. AWS STS (Checks 1-2)
 2. GCP WIF (Checks 3-4)
 3. OCP Admin Gates (Check 5)
-4. Feature Gates (Check 6) - Always executed last
+4. Versions & Channels (Check 6)
+5. OCM Version Gates (Check 7)
+6. Feature Gates (Check 8) - Always executed last
 
 ## Viewing Reports
 

@@ -151,7 +151,7 @@
             <p><strong>Target:</strong> {{ target }} (minor: {{ target_minor }})</p>
             <p><strong>Comparison:</strong> {% if is_z_stream %}Z-stream{% else %}Cross-minor ({{ baseline_minor }} → {{ target_minor }}){% endif %}</p>
             <p><strong>Generated:</strong> {{ timestamp }}</p>
-            <p><strong>Result:</strong> <span class="badge badge-pass">PASS (Informational)</span></p>
+            <p><strong>Result:</strong> {% if validation_result == 'FAIL' %}<span class="badge badge-warn">FAIL</span>{% else %}<span class="badge badge-pass">PASS</span>{% endif %}</p>
         </div>
 
         <h2>Summary</h2>
@@ -164,13 +164,9 @@
                 <div class="number">{{ summary.target_highest_channel or 'none' }}</div>
                 <div class="label">Target Highest Channel</div>
             </div>
-            <div class="summary-card {% if summary.total_upgrade_paths > 0 %}success{% else %}warning{% endif %}">
-                <div class="number">{{ summary.total_upgrade_paths }}</div>
-                <div class="label">Upgrade Paths</div>
-            </div>
-            <div class="summary-card {% if summary.accepted_not_in_channel == 0 %}success{% else %}info{% endif %}">
-                <div class="number">{{ summary.accepted_not_in_channel }}</div>
-                <div class="label">Accepted-Only Versions</div>
+            <div class="summary-card {% if summary.target_is_ga %}success{% else %}info{% endif %}">
+                <div class="number">{% if summary.target_is_ga %}GA{% else %}Pre-GA{% endif %}</div>
+                <div class="label">Target GA Status</div>
             </div>
         </div>
 
@@ -188,8 +184,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for ch in ['candidate', 'fast', 'stable'] %}
-                {% set info = channel_availability.baseline.channels.get(ch, {}) %}
+                {% for ch, info in channel_availability.baseline.channels.items() %}
                 <tr>
                     <td><strong>{{ ch }}-{{ baseline_minor }}</strong></td>
                     <td>{% if info.get('available') %}<span class="badge badge-pass">Yes</span>{% else %}<span class="badge badge-na">No</span>{% endif %}</td>
@@ -213,8 +208,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for ch in ['candidate', 'fast', 'stable'] %}
-                {% set info = channel_availability.target.channels.get(ch, {}) %}
+                {% for ch, info in channel_availability.target.channels.items() %}
                 <tr>
                     <td><strong>{{ ch }}-{{ target_minor }}</strong></td>
                     <td>{% if info.get('available') %}<span class="badge badge-pass">Yes</span>{% else %}<span class="badge badge-na">No</span>{% endif %}</td>
@@ -226,153 +220,55 @@
             </tbody>
         </table>
 
-        <h2>Accepted Streams vs Channels</h2>
-        <p>
-            <strong>{{ accepted_vs_channels.accepted_count }}</strong> version(s) accepted in CI for {{ target_minor }},
-            <strong>{{ accepted_vs_channels.channel_count }}</strong> version(s) in OCM channels.
-        </p>
-
-        {% if accepted_vs_channels.accepted_only %}
-        <details open>
-            <summary>{{ accepted_vs_channels.accepted_only|length }} version(s) accepted in CI but not in any channel</summary>
-            <table>
-                <thead><tr><th>Version</th><th>Status</th></tr></thead>
-                <tbody>
-                    {% for v in accepted_vs_channels.accepted_only %}
-                    <tr>
-                        <td>{{ v }}</td>
-                        <td><span class="badge badge-info">Accepted only</span></td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </details>
-        {% else %}
-        <p><span class="badge badge-pass">✓</span> All accepted versions are in at least one channel.</p>
-        {% endif %}
-
-        {% if accepted_vs_channels.channel_only %}
-        <details>
-            <summary>{{ accepted_vs_channels.channel_only|length }} version(s) in channels but not in accepted streams (anomaly)</summary>
-            <table>
-                <thead><tr><th>Version</th><th>Status</th></tr></thead>
-                <tbody>
-                    {% for v in accepted_vs_channels.channel_only %}
-                    <tr>
-                        <td>{{ v }}</td>
-                        <td><span class="badge badge-warn">Channel only</span></td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </details>
-        {% endif %}
-
-        <h2>Upgrade Paths</h2>
-        <p>
-            Channel queried: <strong>{{ upgrade_paths.channel_queried }}</strong>
-        </p>
-        <table>
-            <thead>
-                <tr>
-                    <th>Metric</th>
-                    <th>Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Total {{ baseline_minor }} → {{ target_minor }} paths</td>
-                    <td><strong>{{ upgrade_paths.total_paths }}</strong></td>
-                </tr>
-                <tr>
-                    <td>Direct path {{ baseline }} → {{ target }}</td>
-                    <td>{% if upgrade_paths.direct_path_exists %}<span class="badge badge-pass">✓ Exists</span>{% else %}<span class="badge badge-warn">✗ Not found</span>{% endif %}</td>
-                </tr>
-                <tr>
-                    <td>Paths from {{ baseline }}</td>
-                    <td>{{ upgrade_paths.paths_from_baseline }}</td>
-                </tr>
-                <tr>
-                    <td>Paths to {{ target }}</td>
-                    <td>{{ upgrade_paths.paths_to_target }}</td>
-                </tr>
-            </tbody>
-        </table>
-
-        {% if upgrade_paths.sample_paths %}
-        <details>
-            <summary>Sample upgrade paths ({{ upgrade_paths.sample_paths|length }} shown)</summary>
-            <table>
-                <thead><tr><th>From</th><th></th><th>To</th></tr></thead>
-                <tbody>
-                    {% for path in upgrade_paths.sample_paths %}
-                    <tr>
-                        <td>{{ path.from }}</td>
-                        <td class="path-arrow">→</td>
-                        <td>{{ path.to }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </details>
-        {% endif %}
-
-        <h2>Cross-Source Consistency</h2>
-        <table>
-            <thead>
-                <tr><th>Property</th><th>Baseline ({{ baseline_minor }})</th><th>Target ({{ target_minor }})</th></tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>GA Status</td>
-                    <td>{% if cross_source.baseline_is_ga %}<span class="badge badge-pass">GA</span> ({{ cross_source.baseline_ga_date[:10] if cross_source.baseline_ga_date else '-' }}){% else %}<span class="badge badge-info">Pre-GA</span>{% endif %}</td>
-                    <td>{% if cross_source.target_is_ga %}<span class="badge badge-pass">GA</span> ({{ cross_source.target_ga_date[:10] if cross_source.target_ga_date else '-' }}){% else %}<span class="badge badge-info">Pre-GA</span>{% endif %}</td>
-                </tr>
-            </tbody>
-        </table>
-
-        {% if cross_source.observations %}
-        <h3>Observations</h3>
-        <ul>
-            {% for obs in cross_source.observations %}
-            <li>{{ obs }}</li>
-            {% endfor %}
-        </ul>
-        {% endif %}
-
-        {% if marketplace is defined and marketplace.available %}
         <h2>Marketplace Availability</h2>
-        <p>Version availability on AWS and GCP marketplaces (via OCM API).</p>
 
+        <h3>ROSA HCP (via ROSA CLI)</h3>
         <table>
             <thead>
-                <tr><th>Version</th><th>AWS (ROSA)</th><th>GCP Marketplace</th><th>Channel Group</th></tr>
+                <tr><th>Version</th><th>HCP Available</th><th>Channels</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Baseline:</strong> {{ baseline_minor }}</td>
+                    <td>{% if marketplace.hcp.baseline.hcp_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
+                    <td>{{ marketplace.hcp.baseline.channels | join(', ') or '-' }}</td>
+                </tr>
+                <tr>
+                    <td><strong>Target:</strong> {{ target_minor }}</td>
+                    <td>{% if marketplace.hcp.target.hcp_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
+                    <td>{{ marketplace.hcp.target.channels | join(', ') or '-' }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        {% if marketplace.available %}
+        <h3>ROSA Classic (via OCM API)</h3>
+        <table>
+            <thead>
+                <tr><th>Version</th><th>ROSA Classic</th><th>Channel Group</th></tr>
             </thead>
             <tbody>
                 <tr>
                     <td><strong>Baseline:</strong> {{ baseline }}</td>
                     <td>{% if marketplace.aws.baseline.rosa_enabled is none %}<span class="badge badge-na">Not found</span>{% elif marketplace.aws.baseline.rosa_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
-                    <td>{% if marketplace.gcp.baseline.gcp_marketplace_enabled is none %}<span class="badge badge-na">Not found</span>{% elif marketplace.gcp.baseline.gcp_marketplace_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
                     <td>{{ marketplace.aws.baseline.channel_group or '-' }}</td>
                 </tr>
                 <tr>
                     <td><strong>Target:</strong> {{ target }}</td>
                     <td>{% if marketplace.aws.target.rosa_enabled is none %}<span class="badge badge-na">Not found</span>{% elif marketplace.aws.target.rosa_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
-                    <td>{% if marketplace.gcp.target.gcp_marketplace_enabled is none %}<span class="badge badge-na">Not found</span>{% elif marketplace.gcp.target.gcp_marketplace_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
                     <td>{{ marketplace.aws.target.channel_group or '-' }}</td>
                 </tr>
             </tbody>
         </table>
 
         {% set aws_enabled = marketplace.aws.target_minor_versions | selectattr('rosa_enabled') | list %}
-        {% set gcp_enabled = marketplace.gcp.target_minor_versions | selectattr('gcp_marketplace_enabled') | list %}
         {% set total_mp = marketplace.aws.target_minor_versions | length %}
         {% if total_mp > 0 %}
         <details>
-            <summary>Target {{ target_minor }} marketplace versions ({{ total_mp }} total, {{ aws_enabled|length }} AWS, {{ gcp_enabled|length }} GCP)</summary>
+            <summary>Target {{ target_minor }} marketplace versions ({{ total_mp }} total, {{ aws_enabled|length }} ROSA Classic)</summary>
             <table>
                 <thead>
-                    <tr><th>Version</th><th>Channel</th><th>AWS (ROSA)</th><th>GCP</th><th>HCP</th></tr>
+                    <tr><th>Version</th><th>Channel</th><th>ROSA Classic</th><th>HCP</th></tr>
                 </thead>
                 <tbody>
                     {% for v in marketplace.aws.target_minor_versions %}
@@ -380,7 +276,6 @@
                         <td>{{ v.version }}</td>
                         <td>{{ v.channel_group }}</td>
                         <td>{% if v.rosa_enabled %}<span class="badge badge-pass">✓</span>{% else %}<span class="badge badge-warn">✗</span>{% endif %}</td>
-                        <td>{% if v.gcp_marketplace_enabled %}<span class="badge badge-pass">✓</span>{% else %}<span class="badge badge-warn">✗</span>{% endif %}</td>
                         <td>{% if v.hosted_control_plane_enabled %}<span class="badge badge-pass">✓</span>{% else %}<span class="badge badge-na">✗</span>{% endif %}</td>
                     </tr>
                     {% endfor %}
@@ -389,14 +284,36 @@
         </details>
         {% endif %}
 
-        {% elif marketplace is defined and not marketplace.available %}
-        <h2>Marketplace Availability</h2>
-        <p><span class="badge badge-na">Skipped</span> OCM not authenticated. Run <code>ocm login --token=&lt;token&gt;</code> to enable marketplace checks.</p>
+        {% elif not marketplace.available %}
+        <p><span class="badge badge-na">ROSA Classic skipped</span> — OCM not authenticated. Run <code>ocm login --token=&lt;token&gt;</code> to enable.</p>
+        {% endif %}
+
+        <h3>OSD GCP (via OCM API)</h3>
+        {% if marketplace.gcp.baseline.skipped and marketplace.gcp.target.skipped %}
+        <p><span class="badge badge-na">Skipped</span> — 5.x is AWS/STS-only, OSD GCP not applicable</p>
+        {% else %}
+        <table>
+            <thead>
+                <tr><th>Version</th><th>OSD GCP</th><th>Channel Group</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Baseline:</strong> {{ baseline }}</td>
+                    <td>{% if marketplace.gcp.baseline.skipped %}<span class="badge badge-na">Skipped (5.x)</span>{% elif marketplace.gcp.baseline.gcp_marketplace_enabled is none %}<span class="badge badge-na">Not found</span>{% elif marketplace.gcp.baseline.gcp_marketplace_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
+                    <td>{% if marketplace.gcp.baseline.skipped %}-{% else %}{{ marketplace.gcp.baseline.channel_group or '-' }}{% endif %}</td>
+                </tr>
+                <tr>
+                    <td><strong>Target:</strong> {{ target }}</td>
+                    <td>{% if marketplace.gcp.target.skipped %}<span class="badge badge-na">Skipped (5.x)</span>{% elif marketplace.gcp.target.gcp_marketplace_enabled is none %}<span class="badge badge-na">Not found</span>{% elif marketplace.gcp.target.gcp_marketplace_enabled %}<span class="badge badge-pass">Available</span>{% else %}<span class="badge badge-warn">Not available</span>{% endif %}</td>
+                    <td>{% if marketplace.gcp.target.skipped %}-{% else %}{{ marketplace.gcp.target.channel_group or '-' }}{% endif %}</td>
+                </tr>
+            </tbody>
+        </table>
         {% endif %}
 
         <div class="footer">
             <p>Generated by gap-versions-channels.py | {{ timestamp }}</p>
-            <p>Data sources: OCM CLI, Accepted Release Streams, Sippy API{% if marketplace is defined and marketplace.available %}, OCM API{% endif %}</p>
+            <p>Data sources: OCM CLI, ROSA CLI, Sippy API{% if marketplace is defined and marketplace.available %}, OCM API{% endif %}</p>
         </div>
     </div>
 </body>

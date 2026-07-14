@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from common import log_info, log_success, log_error, log_warning, check_command, is_pre_ga_version
-from openshift_releases import resolve_openshift_version, extract_minor_version
+from openshift_releases import resolve_gap_versions, extract_minor_version
 from reporters import generate_html_report, generate_json_report, generate_status_report
 import shutil
 from ack_validation import (
@@ -26,9 +26,7 @@ from ack_validation import (
 )
 
 
-import importlib
-_gap_marketplace = importlib.import_module("gap-marketplace")
-check_aws_marketplace_enablement = _gap_marketplace.check_aws_marketplace_enablement
+from marketplace import check_aws_marketplace_enablement
 
 
 def validate_sts_acknowledgment(baseline, target, comparison=None, baseline_cr_dir=None, target_cr_dir=None):
@@ -451,25 +449,9 @@ Exit Codes:
     args = parser.parse_args()
 
     # Resolve versions using shared logic
-    # Check for single version resolution first (--version or OPENSHIFT_VERSION)
-    openshift_version = args.version or os.environ.get('OPENSHIFT_VERSION')
-
-    if openshift_version:
-        # Single version auto-resolution
-        log_info(f"Using single version: {openshift_version}")
-        baseline, target = resolve_openshift_version(openshift_version)
-        if not baseline or not target:
-            log_error(f"Failed to resolve versions from: {openshift_version}")
-            sys.exit(1)
-    elif args.baseline and args.target:
-        # Explicit baseline and target provided
-        baseline = args.baseline
-        target = args.target
-    else:
-        # Auto-detect (fallback to individual resolution)
-        from openshift_releases import resolve_baseline_version, resolve_target_version
-        baseline = args.baseline or resolve_baseline_version()
-        target = args.target or resolve_target_version()
+    baseline, target = resolve_gap_versions(
+        version=args.version, baseline=args.baseline, target=args.target
+    )
 
     # Main execution
     log_info("Starting AWS STS Policy Gap Analysis")

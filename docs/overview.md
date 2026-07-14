@@ -4,7 +4,7 @@ OpenShift Gap Analysis Framework for comparing cloud credential policies and fea
 
 ## What It Does
 
-Identifies changes between OpenShift versions through 6 validation checks:
+Identifies changes between OpenShift versions through 8 validation checks:
 
 **Checks 1-2: AWS STS Validation**
 - **Check 1:** AWS STS Resources - Validates policy files in [managed-cluster-config](https://github.com/openshift/managed-cluster-config)
@@ -17,8 +17,14 @@ Identifies changes between OpenShift versions through 6 validation checks:
 **Check 5: OCP Admin Gate Acknowledgments**
 - **Check 5:** OCP Admin Gates - Validates upgrade readiness by checking required gate acknowledgments
 
-**Check 6: Feature Gates (Informational)**
-- **Check 6:** Feature Gates - Tracks feature additions, removals, and default enablement changes (informational only, always PASS)
+**Check 6: Versions & Channels**
+- **Check 6:** Versions & Channels - Validates version availability across OCM release channels and marketplace enablement (ROSA Classic, ROSA HCP, OSD GCP)
+
+**Check 7: OCM Version Gates**
+- **Check 7:** OCM Version Gates - Validates OCM version gate existence, configurations, and metadata
+
+**Check 8: Feature Gates (Informational)**
+- **Check 8:** Feature Gates - Tracks feature additions, removals, and default enablement changes (informational only, always PASS)
 
 ## How It Works
 

@@ -13,7 +13,7 @@ All scripts use a consistent global check numbering system:
 | **3** | GCP WIF Resources | Validates WIF template (vanilla.yaml) in [managed-cluster-config](https://github.com/openshift/managed-cluster-config) `resources/wif/{version}/` and matches OCP release changes (per-file comparison) | Exit code 1 on FAIL |
 | **4** | GCP WIF Admin Ack | Validates admin acknowledgment files in [managed-cluster-config](https://github.com/openshift/managed-cluster-config) `deploy/osd-cluster-acks/wif/{version}/` | Exit code 1 on FAIL |
 | **5** | OCP Admin Gates | Validates admin gates from cluster-version-operator are acknowledged in [managed-cluster-config](https://github.com/openshift/managed-cluster-config) `deploy/osd-cluster-acks/ocp/{version}/` (conditional: if gates exist, both files required; if no gates, both files must be absent) | Exit code 1 on FAIL |
-| **6** | Versions & Channels | Validates OCP version availability across OCM release channels (candidate/fast/stable), AWS/GCP marketplace availability (via OCM API), upgrade path existence, and cross-source consistency | Exit code 1 on FAIL |
+| **6** | Versions & Channels | Validates OCP version availability across OCM release channels (candidate/fast/stable/eus for GA, candidate-only for pre-GA) and marketplace availability (ROSA Classic via OCM API, ROSA HCP via ROSA CLI, OSD GCP via OCM API — 4.x only) | Exit code 1 on FAIL |
 | **7** | OCM Version Gates | Validates OCM version gate existence, configurations, and metadata for target OCP versions compared to baseline version gates | Exit code 1 on FAIL |
 | **8** | Feature Gates | Analyzes feature gate changes from Sippy API (Info only, always executed last). **Z-stream behavior:** When comparing z-stream versions (e.g., 4.21.15 → 4.21.16), shows default feature gates instead of differences | Always PASS (exit code 0) |
 
@@ -237,7 +237,50 @@ When no admin gates exist in cluster-version-operator, acknowledgment files use 
 
 **PR Detection:** Uses commit history API to find the exact PR that added the admin-ack.yaml file, providing accurate attribution rather than title-based keyword matching.
 
-### Check 6: Feature Gates
+### Check 6: Versions & Channels
+
+**What it validates:**
+- OCP version availability across OCM release channels (candidate/fast/stable/eus for GA versions, candidate-only for pre-GA)
+- Marketplace availability: ROSA Classic (OCM API `rosa_enabled`), ROSA HCP (`rosa list versions --hosted-cp`), OSD GCP (OCM API `gcp_marketplace_enabled`, 4.x only — skipped for 5.x targets)
+
+**Data sources:**
+- OCM CLI: `ocm list versions` (channel availability, ROSA Classic/OSD GCP marketplace)
+- ROSA CLI: `rosa list versions --hosted-cp` (ROSA HCP availability)
+- Sippy API: GA version detection
+
+**GA-aware channel checking:**
+- GA versions are checked across all channels (candidate, fast, stable, eus)
+- Pre-GA versions are checked in candidate channel only
+
+**Marketplace severity (GA targets):**
+- ROSA HCP missing → FAIL (all versions)
+- ROSA Classic missing → FAIL (4.x) / WARN (5.x)
+- OSD GCP missing → FAIL (4.x only, skipped for 5.x)
+- Non-GA targets: all marketplace checks are informational only
+
+**Pass criteria:**
+- Channel availability FAIL: GA or next-after-GA target not found in any channel
+- Marketplace FAIL: GA target missing from required marketplace (see severity above)
+- Script exits 1 on validation FAIL or execution error
+
+### Check 7: OCM Version Gates
+
+**What it analyzes:**
+- Checks if target minor version has corresponding version gate in OCM (via clusters-mgmt API `/api/clusters_mgmt/v1/version_gates`)
+- Verifies enabled/disabled configurations and gate metadata (labels, descriptions, documentation links)
+- Compares gate configurations between baseline (Y-1) and target (Y) to identify new or removed gates
+- WIF gate excluded from comparison for 5.x+ targets (AWS/STS-only)
+
+**Data source:**
+- OCM API: `/api/clusters_mgmt/v1/version_gates` (via OCM CLI `ocm get`)
+
+**Pass criteria:**
+- FAIL: baseline gates missing from target (need to be created), or invalid gate metadata
+- PASS: all baseline gate labels present in target with valid metadata
+- Script exits 1 on validation FAIL or execution error
+- Fallback gracefully to simulated/dry-run gates configuration if OCM credentials or CLI are absent
+
+### Check 8: Feature Gates
 
 **What it analyzes:**
 - New feature gates added
@@ -257,22 +300,6 @@ When no admin gates exist in cluster-version-operator, acknowledgment files use 
 - Always PASS (informational only)
 - Analysis completes successfully
 - Changes are tracked but do not affect exit code
-
-### Check 8: OCM Version Gates
-
-**What it analyzes:**
-- Checks if target minor version has corresponding version gate in OCM (via clusters-mgmt API `/api/clusters_mgmt/v1/version_gates`)
-- Verifies enabled/disabled configurations and gate metadata (labels, descriptions, documentation links)
-- Compares gate configurations between baseline (Y-1) and target (Y) to identify new or removed gates
-
-**Data source:**
-- OCM API: `/api/clusters_mgmt/v1/version_gates` (via OCM CLI `ocm get`)
-
-**Pass criteria:**
-- Always PASS (informational/warning only)
-- Script exits 0 even if gates are missing or inconsistent
-- Script exits 1 on fatal execution errors (e.g. invalid arguments, missing dependencies, etc.)
-- Fallback gracefully to simulated/dry-run gates configuration if OCM credentials or CLI are absent
 
 ## Version Resolution
 
@@ -346,7 +373,7 @@ python3 ./scripts/gap-aws-sts.py --baseline 4.23 --target 5.0
 
 ## Exit Codes
 
-### Individual Scripts (gap-aws-sts.py, gap-gcp-wif.py, gap-ocp-gate-ack.py)
+### Individual Scripts (gap-aws-sts.py, gap-gcp-wif.py, gap-ocp-gate-ack.py, gap-versions-channels.py, gap-ocm-version-gate.py)
 - **Exit 0 (PASS):** All relevant checks passed OR dry-run mode
 - **Exit 1 (FAIL):** One or more checks failed OR execution error
 
@@ -354,13 +381,9 @@ python3 ./scripts/gap-aws-sts.py --baseline 4.23 --target 5.0
 - **Exit 0 (PASS):** Always (informational only) OR dry-run mode
 - **Exit 1 (FAIL):** Only on execution error (network, invalid version, etc.)
 
-### OCM Version Gate Script (gap-ocm-version-gate.py)
-- **Exit 0 (PASS):** Always (informational only) OR dry-run mode
-- **Exit 1 (FAIL):** Only on execution error (missing Python dependency, syntax error, etc.)
-
 ### Combined Script (gap-all.sh)
-- **Exit 0 (PASS):** All checks 1-5 passed (check 6 is informational) OR dry-run mode
-- **Exit 1 (FAIL):** Any of checks 1-5 failed OR execution error
+- **Exit 0 (PASS):** All checks 1-7 passed (check 8 is informational) OR dry-run mode
+- **Exit 1 (FAIL):** Any of checks 1-7 failed OR execution error
 
 ## CI/CD Integration
 

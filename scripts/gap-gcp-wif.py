@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'lib'))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from common import log_info, log_success, log_error, log_warning, check_command, is_pre_ga_version
-from openshift_releases import resolve_openshift_version, extract_minor_version
+from openshift_releases import resolve_gap_versions, extract_minor_version
 from reporters import generate_html_report, generate_json_report, generate_status_report
 import shutil
 from ack_validation import (
@@ -26,9 +26,7 @@ from ack_validation import (
 )
 
 
-import importlib
-_gap_marketplace = importlib.import_module("gap-marketplace")
-check_gcp_marketplace_enablement = _gap_marketplace.check_gcp_marketplace_enablement
+from marketplace import check_gcp_marketplace_enablement
 
 
 def validate_wif_acknowledgment(baseline, target, added_actions=None):
@@ -424,25 +422,9 @@ Exit Codes:
     args = parser.parse_args()
 
     # Resolve versions using shared logic
-    # Check for single version resolution first (--version or OPENSHIFT_VERSION)
-    openshift_version = args.version or os.environ.get('OPENSHIFT_VERSION')
-
-    if openshift_version:
-        # Single version auto-resolution
-        log_info(f"Using single version: {openshift_version}")
-        baseline, target = resolve_openshift_version(openshift_version)
-        if not baseline or not target:
-            log_error(f"Failed to resolve versions from: {openshift_version}")
-            sys.exit(1)
-    elif args.baseline and args.target:
-        # Explicit baseline and target provided
-        baseline = args.baseline
-        target = args.target
-    else:
-        # Auto-detect (fallback to individual resolution)
-        from openshift_releases import resolve_baseline_version, resolve_target_version
-        baseline = args.baseline or resolve_baseline_version()
-        target = args.target or resolve_target_version()
+    baseline, target = resolve_gap_versions(
+        version=args.version, baseline=args.baseline, target=args.target
+    )
 
     # Main execution
     log_info("Starting GCP WIF Policy Gap Analysis")
@@ -539,6 +521,90 @@ Exit Codes:
             generate_html_report(report_data, html_file)
             log_info(f"HTML report generated: {html_file}")
             
+        sys.exit(0)
+
+    # Version 5.x+ is AWS/STS-only — no GCP/WIF support
+    target_major = 0
+    try:
+        target_major = int(extract_minor_version(target).split('.')[0])
+    except (ValueError, IndexError):
+        pass
+
+    if target_major >= 5:
+        log_warning(f"Version {target} is 5.x+ (AWS/STS-only). GCP WIF is not applicable.")
+        log_info("Skipping GCP WIF analysis and generating dummy report.")
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_data = {
+            'type': 'GCP WIF Policy Gap Analysis',
+            'baseline': baseline,
+            'target': target,
+            'timestamp': datetime.now().isoformat(),
+            'validation_result': 'PASS',
+            'validation_checked': False,
+            'validation_details': {
+                'valid': True,
+                'check_1_resources': {
+                    'status': 'PASS',
+                    'errors': [],
+                    'roles_with_changes': {},
+                    'file_count': 0
+                },
+                'check_2_admin_ack': {
+                    'status': 'PASS',
+                    'errors': [],
+                    'expected_baseline': '',
+                    'actual_baseline': ''
+                }
+            },
+            'gcp_marketplace': {
+                'status': 'PASS',
+                'message': f"GCP WIF is not applicable for OpenShift 5.x+ (target version is {target}). 5.x is AWS/STS-only.",
+                'channels': {}
+            },
+            'comparison': {
+                'actions': {
+                    'target_only': [],
+                    'baseline_only': []
+                },
+                'file_changes': [],
+                'file_changes_count': 0
+            },
+            'summary': {
+                'added': 0,
+                'removed': 0,
+                'total_changes': 0
+            }
+        }
+
+        report_dir = args.report_dir
+        os.makedirs(report_dir, exist_ok=True)
+        json_file = os.path.join(report_dir, f"gap-analysis-gcp-wif_{baseline}_to_{target}_{timestamp}.json")
+        generate_json_report(report_data, json_file)
+        log_info(f"JSON report generated: {json_file}")
+
+        generate_status_report(
+            check_number=2,
+            check_name="GCP WIF Template Gap",
+            status="SKIP",
+            details={
+                "differences_count": 0,
+                "added_count": 0,
+                "removed_count": 0,
+                "validation_passed": True,
+                "validation_checked": False,
+                "message": f"GCP WIF not applicable for 5.x+ (target: {target}). AWS/STS-only."
+            },
+            report_dir=report_dir,
+        )
+
+        if os.environ.get('GAP_FULL_REPORT'):
+            log_info("Skipping HTML reports (full report will be generated)")
+        else:
+            html_file = os.path.join(report_dir, f"gap-analysis-gcp-wif_{baseline}_to_{target}_{timestamp}.html")
+            generate_html_report(report_data, html_file)
+            log_info(f"HTML report generated: {html_file}")
+
         sys.exit(0)
 
     # Check prerequisites
