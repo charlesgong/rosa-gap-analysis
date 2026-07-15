@@ -168,7 +168,6 @@ def analyze_channel_availability(baseline_minor, target_minor, baseline_full, ta
     return result
 
 
-
 def is_ocm_authenticated():
     """Check if ocm CLI is available and authenticated."""
     try:

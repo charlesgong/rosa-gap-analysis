@@ -93,11 +93,6 @@
         .ci-dot { width: 12px; height: 12px; border-radius: 50%; margin-bottom: 6px; }
         .ci-dot-pass { background: var(--green); } .ci-dot-fail { background: var(--red); } .ci-dot-warn { background: var(--yellow); }
 
-        /* ── Upgrade Path Pills ── */
-        .path-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-        .path-pill { background: var(--bg-code); border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; font-family: monospace; font-size: .85em; color: var(--text-mono); }
-        .path-arrow { color: var(--accent); margin: 0 2px; }
-
         /* ── Misc ── */
         a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
         .warn-box { border-left: 3px solid var(--yellow); margin-top: 12px; }
@@ -182,34 +177,53 @@
         </div>
         <div class="section-body">
 
-        {# ─── AWS Marketplace ─── #}
+        {# ─── Marketplace Availability (matching full gap analysis layout) ─── #}
         {% if check_data.channels is defined and check_data.channels and check_data.channels.values()|first is mapping and 'rosa_classic' in check_data.channels.values()|first %}
+        {% set first_ch = check_data.channels.values()|first %}
+
+        <h4 style="margin-top:0.8em;">ROSA HCP (via ROSA CLI)</h4>
         <table class="tbl">
-            <thead><tr><th>Channel</th><th style="text-align:center;">ROSA Classic</th><th style="text-align:center;">ROSA HCP</th></tr></thead>
+            <thead><tr><th>Channel</th><th style="text-align:center;">HCP Available</th></tr></thead>
             <tbody>
             {% for chan, info in check_data.channels.items() %}
             <tr>
-                <td>{{ chan }}</td>
-                <td style="text-align:center;">{% if info.rosa_classic %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.rosa_classic_output }}</span>{% else %}<span class="no">&#10007;</span> <span style="color:var(--text-muted,#94a3b8);">—</span>{% endif %}</td>
-                <td style="text-align:center;">{% if info.rosa_hcp %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.rosa_hcp_output }}</span>{% else %}<span class="no">&#10007;</span> <span style="color:var(--text-muted,#94a3b8);">—</span>{% endif %}</td>
+                <td><strong>{{ chan }}</strong></td>
+                <td style="text-align:center;">{% if info.rosa_hcp %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.rosa_hcp_output }}</span>{% else %}<span class="no">&#10007;</span> —{% endif %}</td>
             </tr>
             {% endfor %}
             </tbody>
         </table>
 
-        {# ─── GCP Marketplace ─── #}
-        {% elif check_data.channels is defined and check_data.channels and check_data.channels.values()|first is mapping and 'gcp_marketplace' in check_data.channels.values()|first %}
+        <h4>ROSA Classic (via OCM API)</h4>
         <table class="tbl">
-            <thead><tr><th>Channel</th><th style="text-align:center;">GCP Marketplace</th></tr></thead>
+            <thead><tr><th>Channel</th><th style="text-align:center;">ROSA Classic</th></tr></thead>
             <tbody>
             {% for chan, info in check_data.channels.items() %}
             <tr>
-                <td>{{ chan }}</td>
-                <td style="text-align:center;">{% if info.gcp_marketplace %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.gcp_marketplace_output }}</span>{% else %}<span class="no">&#10007;</span> <span style="color:var(--text-muted,#94a3b8);">—</span>{% endif %}</td>
+                <td><strong>{{ chan }}</strong></td>
+                <td style="text-align:center;">{% if info.rosa_classic %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.rosa_classic_output }}</span>{% else %}<span class="no">&#10007;</span> —{% endif %}</td>
             </tr>
             {% endfor %}
             </tbody>
         </table>
+
+        {% if not first_ch.gcp_skipped %}
+        <h4>OSD GCP Marketplace Enablement</h4>
+        <table class="tbl">
+            <thead><tr><th>Channel</th><th style="text-align:center;">OSD GCP</th></tr></thead>
+            <tbody>
+            {% for chan, info in check_data.channels.items() %}
+            <tr>
+                <td><strong>{{ chan }}</strong></td>
+                <td style="text-align:center;">{% if info.gcp_marketplace %}<span class="ok">&#10003;</span> <span style="font-family:monospace;font-size:.88em;">{{ info.gcp_marketplace_output }}</span>{% else %}<span class="no">&#10007;</span> —{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <h4>OSD GCP Marketplace Enablement</h4>
+        <p><em>Skipped — 5.x is AWS/STS-only, OSD GCP not applicable</em></p>
+        {% endif %}
 
         {# ─── Version Gates ─── #}
         {% elif check_data.gates is defined and check_data.gates %}
@@ -228,29 +242,6 @@
         </table>
         {% if check_data.gates[0].warning_message is defined and check_data.gates[0].warning_message %}
         <div class="msg-block warn-box">{{ check_data.gates[0].warning_message }}</div>
-        {% endif %}
-
-        {# ─── Upgrade Paths ─── #}
-        {% elif check_data.upgrade is defined and check_data.upgrade %}
-        {% set up = check_data.upgrade %}
-        <table class="tbl">
-            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-            <tbody>
-                <tr><td>Baseline</td><td style="font-family:monospace;">{{ up.baseline }}</td></tr>
-                <tr><td>Target</td><td style="font-family:monospace;">{{ up.target }}</td></tr>
-                <tr><td>Comparison Type</td><td>{{ 'Z-Stream' if up.is_z_stream else 'Cross-Minor' }}</td></tr>
-                <tr><td>Channel Queried</td><td style="font-family:monospace;">{{ up.channel_queried }}</td></tr>
-                <tr><td>Total Paths</td><td>{{ up.total_paths }}</td></tr>
-                <tr><td>Paths from {{ up.baseline }}</td><td>{{ up.paths_from_baseline }}</td></tr>
-                <tr><td>Paths to {{ up.target }}</td><td>{{ up.paths_to_target }}</td></tr>
-                <tr><td>Direct Path ({{ up.baseline }} &rarr; {{ up.target }})</td><td>{% if up.direct_path_exists %}<span class="ok">Yes</span>{% else %}<span class="wr">No</span>{% endif %}</td></tr>
-            </tbody>
-        </table>
-        {% if up.sample_paths %}
-        <p class="sub-label">Sample Upgrade Paths</p>
-        <div class="path-list">
-            {% for p in up.sample_paths %}<span class="path-pill">{{ p.from }} <span class="path-arrow">&rarr;</span> {{ p.to }}</span>{% endfor %}
-        </div>
         {% endif %}
 
         {# ─── CI Job Status ─── #}
