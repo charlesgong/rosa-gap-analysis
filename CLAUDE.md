@@ -126,7 +126,7 @@ export GH_TOKEN="..." && ./ci/prow-autofix.sh
 
 | Script | Purpose |
 |--------|---------|
-| scripts/prod/gap-ga-validation.py | ROSA Production GA Readiness validation — checks channel availability, ROSA CLI compatibility, AWS/GCP marketplace enablement, version gates, upgrade paths, CI job status, SOP/runbook updates, GCP WIF template compatibility. Run manually by SREs before GA releases. See [docs/ga-readiness-validation.md](docs/ga-readiness-validation.md). |
+| scripts/prod/gap-ga-validation.py | ROSA Production GA Readiness validation — checks channel availability, ROSA CLI compatibility, marketplace availability (AWS/GCP), version gates, CI job status, SOP/runbook updates, GCP WIF template compatibility. Run manually by SREs before GA releases. See [docs/ga-readiness-validation.md](docs/ga-readiness-validation.md). |
 
 **Expected baseline**: For target X.Y, baseline is X.(Y-1). Example: 4.22 expects 4.21 baseline.
 

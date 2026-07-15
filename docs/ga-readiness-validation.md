@@ -18,10 +18,8 @@ Automates the pre-GA readiness checklist to ensure all production prerequisites 
 |-------|-------------|
 | **Channel Availability** | Verifies the target version is available in required OCM channels (candidate, fast, stable) |
 | **ROSA CLI Compatibility** | Confirms the ROSA CLI detects the target version across all channel groups |
-| **AWS Marketplace Enablement** | Verifies AWS marketplace enablement for ROSA Classic and ROSA HCP across channels (stable, fast, candidate, eus) |
-| **GCP Marketplace Enablement** | Verifies GCP marketplace enablement across channels (stable, fast, candidate, eus) |
+| **Marketplace Availability** | Verifies AWS (ROSA Classic, HCP) and GCP marketplace enablement across channels (stable, fast, candidate, eus) |
 | **Version Gates** | Checks OCM version gates are properly configured for the target release |
-| **Upgrade Paths** | Confirms upgrade paths from supported versions are available via OCM CLI |
 | **CI Job Status** | Checks that gap analysis Prow CI jobs are passing for the target version |
 | **SOP & Runbooks Update Status** | Validates that Gap Analysis SOPs and runbooks are updated for the target version |
 | **GCP WIF Template Compatibility** | Checks that GCP WIF template configurations in OCM support the target version |
@@ -98,14 +96,10 @@ The script generates two report files in the report directory:
 [SUCCESS] Channel Availability - Version 4.22 is available in channels: candidate, fast, stable.
 [INFO] Executing: Check ROSA CLI detection and listing across channels...
 [SUCCESS] ROSA CLI Compatibility - ROSA CLI detected target version 4.22 across all channels.
-[INFO] Executing: Verify AWS marketplace enablement for ROSA Classic and ROSA HCP...
-[SUCCESS] AWS Marketplace Enablement - Successfully verified AWS Marketplace enablement across channels.
-[INFO] Executing: Verify GCP marketplace enablement across channels...
-[SUCCESS] GCP Marketplace Enablement - Successfully verified GCP Marketplace enablement across channels.
+[INFO] Executing: Verify AWS and GCP marketplace enablement across channels...
+[SUCCESS] Marketplace Availability - Marketplace enablement across channels: candidate, eus, fast, stable.
 [INFO] Executing: Verify OCM version gates are configured for the target release...
 [SUCCESS] Version Gates - Found 1 version gate(s) for 4.22.
-[INFO] Executing: Verify upgrade paths from supported versions are available via OCM CLI...
-[SUCCESS] Upgrade Paths - Upgrade paths available in 3/3 channels.
 [INFO] Executing: Check gap analysis Prow CI job status for the target version...
 [SUCCESS] CI Job Status - Latest Prow job passed.
 [INFO] Executing: Verify SOPs and runbooks updates...

@@ -433,7 +433,6 @@
                 {% elif versions_channels.validation_result == 'PASS' %}
                     {% set success_count = success_count + 1 %}
                 {% endif %}
-                {% set info_count = info_count + 1 %}
             {% endif %}
 
             {% if ocm_version_gate %}
@@ -442,7 +441,6 @@
                 {% elif ocm_version_gate.validation_result == 'PASS' %}
                     {% set success_count = success_count + 1 %}
                 {% endif %}
-                {% set info_count = info_count + 1 %}
             {% endif %}
 
             <div class="status-badges">

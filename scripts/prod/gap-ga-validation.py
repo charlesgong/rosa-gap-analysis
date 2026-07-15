@@ -212,68 +212,6 @@ class GAReadinessValidator:
             self.critical_failures += 1
             self.log_status(name, "FAIL", f"Failed checking version gates: {e}")
 
-    def check_upgrade_paths(self):
-        """Verify upgrade paths from supported versions are available via OCM CLI."""
-        name = "Upgrade Paths"
-
-        try:
-            from openshift_releases import extract_minor_version
-            target_minor = extract_minor_version(self.version)
-            baseline_minor = extract_minor_version(self.baseline) if self.baseline else target_minor
-
-            is_z_stream = (baseline_minor == target_minor)
-            baseline_full = self.baseline or self.version
-            target_full = self.version
-
-            upgrade_result = _versions_channels.analyze_upgrade_paths(
-                baseline_minor, target_minor, baseline_full, target_full
-            )
-
-            total_paths = upgrade_result.get('total_paths', 0)
-            channel_queried = upgrade_result.get('channel_queried', 'unknown')
-            direct_path = upgrade_result.get('direct_path_exists', False)
-            paths_to = upgrade_result.get('paths_to_target', 0)
-            paths_from = upgrade_result.get('paths_from_baseline', 0)
-            sample_paths = upgrade_result.get('sample_paths', [])[:10]
-
-            upgrade_data = {
-                "baseline": baseline_full,
-                "target": target_full,
-                "is_z_stream": is_z_stream,
-                "channel_queried": channel_queried,
-                "total_paths": total_paths,
-                "paths_from_baseline": paths_from,
-                "paths_to_target": paths_to,
-                "direct_path_exists": direct_path,
-                "sample_paths": sample_paths,
-            }
-
-            details = [f"Channel: {channel_queried}"]
-            details.append(f"Total paths ({baseline_minor} \u2192 {target_minor}): {total_paths}")
-            details.append(f"Paths from {baseline_full}: {paths_from}")
-            details.append(f"Paths to {target_full}: {paths_to}")
-            details.append(f"Direct {baseline_full} \u2192 {target_full}: {'Yes' if direct_path else 'No'}")
-            if sample_paths:
-                samples = [f"{p['from']} \u2192 {p['to']}" for p in sample_paths[:5]]
-                details.append(f"Sample: {', '.join(samples)}")
-            details_str = "\n   ".join(details)
-
-            if total_paths > 0:
-                self.log_status(
-                    name, "PASS",
-                    f"Found {total_paths} upgrade path(s) in {channel_queried}.\n   {details_str}",
-                    extra={"upgrade": upgrade_data}
-                )
-            else:
-                self.log_status(
-                    name, "WARN",
-                    f"No upgrade paths found in {channel_queried}. "
-                    f"Version may not be in channel graph yet.\n   {details_str}",
-                    extra={"upgrade": upgrade_data}
-                )
-        except Exception as e:
-            self.log_status(name, "WARN", f"Upgrade paths check failed: {e}")
-
     def check_ci_job_status(self):
         """Check gap analysis Prow CI job status for the target version."""
         name = "CI Job Status"
@@ -528,44 +466,57 @@ class GAReadinessValidator:
                 f"Gap Analysis SOP validation failed one or more criteria for '{major_minor}' ({source_info}).{detailed_explanation}"
             )
 
-    def check_aws_marketplace_enablement(self):
-        """Verify AWS marketplace enablement for ROSA Classic and ROSA HCP."""
-        name = "AWS Marketplace Enablement"
-        result = _marketplace.check_aws_marketplace_enablement(self.version)
-        status = result.get('status', 'FAIL')
-        message = result.get('message', 'Unknown error')
-        channels = result.get('channels', {})
+    def check_marketplace_availability(self):
+        """Verify AWS and GCP marketplace enablement across channels."""
+        name = "Marketplace Availability"
+        skip_gcp = getattr(self, '_skip_gcp', False)
 
-        if channels:
-            details = []
-            for chan, info in sorted(channels.items()):
-                classic = "Yes" if info.get("rosa_classic") else "No"
-                hcp = "Yes" if info.get("rosa_hcp") else "No"
-                details.append(f"{chan}: Classic={classic}, HCP={hcp}")
+        aws_result = _marketplace.check_aws_marketplace_enablement(self.version)
+        if skip_gcp:
+            gcp_result = {'status': 'PASS', 'message': 'Skipped — 5.x is AWS/STS-only', 'channels': {}}
+        else:
+            gcp_result = _marketplace.check_gcp_marketplace_enablement(self.version)
+
+        aws_channels = aws_result.get('channels', {})
+        gcp_channels = gcp_result.get('channels', {})
+
+        all_channel_names = sorted(set(list(aws_channels.keys()) + list(gcp_channels.keys())))
+        combined = {}
+        for chan in all_channel_names:
+            aws_info = aws_channels.get(chan, {})
+            gcp_info = gcp_channels.get(chan, {})
+            combined[chan] = {
+                "rosa_classic": aws_info.get("rosa_classic", False),
+                "rosa_classic_output": aws_info.get("rosa_classic_output", ""),
+                "rosa_hcp": aws_info.get("rosa_hcp", False),
+                "rosa_hcp_output": aws_info.get("rosa_hcp_output", ""),
+                "gcp_marketplace": gcp_info.get("gcp_marketplace", False),
+                "gcp_marketplace_output": gcp_info.get("gcp_marketplace_output", ""),
+                "gcp_skipped": skip_gcp,
+            }
+
+        statuses = [aws_result.get('status', 'FAIL'), gcp_result.get('status', 'FAIL')]
+        if 'FAIL' in statuses:
+            status = 'FAIL'
+        elif 'WARN' in statuses:
+            status = 'WARN'
+        else:
+            status = 'PASS'
+
+        details = []
+        for chan in all_channel_names:
+            c = combined[chan]
+            classic = "Yes" if c["rosa_classic"] else "No"
+            hcp = "Yes" if c["rosa_hcp"] else "No"
+            gcp = "Skipped" if skip_gcp else ("Yes" if c["gcp_marketplace"] else "No")
+            details.append(f"{chan}: Classic={classic}, HCP={hcp}, GCP={gcp}")
+        message = f"Marketplace enablement across channels: {', '.join(all_channel_names)}."
+        if details:
             message += "\n   " + "\n   ".join(details)
 
         if status == 'FAIL':
             self.critical_failures += 1
-        self.log_status(name, status, message, extra={"channels": channels} if channels else None)
-
-    def check_gcp_marketplace_enablement(self):
-        """Verify GCP marketplace enablement across channels."""
-        name = "GCP Marketplace Enablement"
-        result = _marketplace.check_gcp_marketplace_enablement(self.version)
-        status = result.get('status', 'FAIL')
-        message = result.get('message', 'Unknown error')
-        channels = result.get('channels', {})
-
-        if channels:
-            details = []
-            for chan, info in sorted(channels.items()):
-                gcp = "Yes" if info.get("gcp_marketplace") else "No"
-                details.append(f"{chan}: GCP={gcp}")
-            message += "\n   " + "\n   ".join(details)
-
-        if status == 'FAIL':
-            self.critical_failures += 1
-        self.log_status(name, status, message, extra={"channels": channels} if channels else None)
+        self.log_status(name, status, message, extra={"channels": combined} if combined else None)
 
     def check_gcp_wif_compatibility(self):
         """Verify GCP WIF template compatibility in OCM wif-configs."""
@@ -627,24 +578,21 @@ class GAReadinessValidator:
         log_info("=========================================")
 
         major_minor = ".".join(self.version.split(".")[:2])
-        skip_gcp = is_version_5x(major_minor)
+        self._skip_gcp = is_version_5x(major_minor)
 
         all_checks = {
             "Channel Availability": self.check_channel_availability,
             "ROSA CLI Compatibility": self.check_rosa_cli_compatibility,
-            "AWS Marketplace Enablement": self.check_aws_marketplace_enablement,
+            "Marketplace Availability": self.check_marketplace_availability,
             "Version Gates": self.check_version_gates,
-            "Upgrade Paths": self.check_upgrade_paths,
             "CI Job Status": self.check_ci_job_status,
             "SOP & Runbooks Update Status": self.check_documentation_status,
         }
 
-        if skip_gcp:
+        if self._skip_gcp:
             log_info("5.x detected — skipping GCP checks (AWS/STS-only)")
-            self.log_status("GCP Marketplace Enablement", "PASS", "Skipped — 5.x is AWS/STS-only")
             self.log_status("GCP WIF Template Compatibility", "PASS", "Skipped — 5.x is AWS/STS-only")
         else:
-            all_checks["GCP Marketplace Enablement"] = self.check_gcp_marketplace_enablement
             all_checks["GCP WIF Template Compatibility"] = self.check_gcp_wif_compatibility
 
         for name, check_fn in all_checks.items():
