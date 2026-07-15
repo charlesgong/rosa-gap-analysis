@@ -100,6 +100,14 @@ fi
 - `https://github.com/openshift/cluster-version-operator` - Admin gate ConfigMaps
 - [`https://github.com/openshift/managed-cluster-config`](https://github.com/openshift/managed-cluster-config) - Acknowledgment ConfigMaps
 
+**Versions & Channels / Marketplace:**
+- OCM CLI (`ocm list versions`) - Channel availability, ROSA Classic/OSD GCP marketplace (optional, graceful fallback)
+- ROSA CLI (`rosa list versions --hosted-cp`) - ROSA HCP marketplace availability (optional, graceful fallback)
+- Sippy API - GA version detection
+
+**OCM Version Gates:**
+- OCM API (`/api/clusters_mgmt/v1/version_gates`) via `ocm` CLI - Version gate configurations (optional, graceful fallback)
+
 ## Implementation Details
 
 **File Discovery:**

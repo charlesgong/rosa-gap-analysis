@@ -182,12 +182,13 @@ gap-analysis/
 ├── scripts/                  # Executable scripts
 │   ├── gap-aws-sts.py       # AWS STS policy analysis
 │   ├── gap-gcp-wif.py       # GCP WIF policy analysis
-│   ├── gap-feature-gates.py # Feature gate analysis
 │   ├── gap-ocp-gate-ack.py  # OCP admin gate acknowledgment analysis
 │   ├── gap-versions-channels.py # Version & channel availability analysis
 │   ├── gap-ocm-version-gate.py # OCM version gate analysis
+│   ├── gap-feature-gates.py # Feature gate analysis (informational)
 │   ├── gap-all.sh           # Run all analyses
-│   └── lib/                 # Shared libraries
+│   ├── lib/                 # Shared libraries
+│   └── prod/                # Production scripts (GA readiness validation)
 │
 ├── reports/                  # Generated reports (default location)
 ├── skills/                   # Claude AI skills
