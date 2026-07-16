@@ -7,10 +7,12 @@ Configuration options for gap analysis scripts.
 All Python scripts support:
 
 ```bash
---baseline <version>     # Baseline version (default: auto-detect)
---target <version>       # Target version (default: auto-detect)
+--version <version>      # Single version (auto-resolves baseline and target)
+--baseline <version>     # Baseline version (requires --target)
+--target <version>       # Target version (requires --baseline)
 --report-dir <path>      # Report directory (default: reports/)
 --verbose                # Enable verbose logging
+--dry-run                # Show resolved versions without running analysis
 -h, --help               # Show help
 ```
 
@@ -46,10 +48,12 @@ OCM_TOKEN=<token>            # OCM Offline Token used to query live OCM API endp
 4. `BASE_VERSION` AND `TARGET_VERSION` env vars (both required)
 5. Auto-detection (latest stable → latest candidate)
 
-**For individual Python scripts**, versions are resolved independently:
-1. Command-line flags (`--baseline` or `--target`)
-2. Environment variables (`BASE_VERSION` or `TARGET_VERSION`)
-3. Auto-detection
+**For individual Python scripts**, versions follow the same precedence:
+1. `--version` flag (auto-resolves both baseline and target)
+2. `OPENSHIFT_VERSION` env var (auto-resolves both baseline and target)
+3. `--baseline` AND `--target` flags (both required)
+4. `BASE_VERSION` AND `TARGET_VERSION` env vars (both required)
+5. Auto-detection (latest stable → latest candidate)
 
 ## Version Formats
 

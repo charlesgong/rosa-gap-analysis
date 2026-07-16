@@ -148,7 +148,7 @@ OpenShift 5.x is **AWS/STS-only** — all GCP/WIF checks must be skipped for 5.x
 | `gap-gcp-wif.py` | Early exit block (same pattern as `< 4.16` skip) with dummy PASS/SKIP report | All GCP WIF validation |
 | `gap-ocm-version-gate.py` | `skipped_labels` set excludes `api.openshift.com/gate-wif` for `target_minor.startswith("5.")` | WIF gate comparison |
 | `gap-versions-channels.py` | `skip_gcp_baseline` / `skip_gcp_target` per-version flags passed to `analyze_marketplace_availability()` | GCP marketplace data for each 5.x version individually |
-| `gap-ga-validation.py` | Excludes `check_gcp_marketplace_enablement` and `check_gcp_wif_compatibility` from `all_checks` | GCP marketplace + WIF template checks |
+| `gap-ga-validation.py` | `_skip_gcp` flag: GCP handled within combined `check_marketplace_availability()`; excludes `check_gcp_wif_compatibility` from `all_checks` | GCP marketplace (via `_skip_gcp` in combined check) + WIF template checks |
 
 **When adding a new gap script with GCP/WIF checks:** Add a 5.x guard using `is_version_5x()` and document it in this table.
 
@@ -317,8 +317,10 @@ Add script execution in this order:
 1. AWS STS (checks 1-2)
 2. GCP WIF (checks 3-4)
 3. OCP Gate Ack (check 5)
-4. **[NEW SCRIPT HERE]** (check N)
-5. Feature Gates (check 6) - ALWAYS LAST
+4. Versions & Channels (check 6)
+5. OCM Version Gates (check 7)
+6. **[NEW SCRIPT HERE]** (check N)
+7. Feature Gates (check 8) - ALWAYS LAST
 
 ```bash
 # Run <New> analysis

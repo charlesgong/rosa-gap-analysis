@@ -22,6 +22,8 @@ scripts/
 ├── gap-feature-gates.py        # Feature gates analysis
 ├── gap-all.sh                  # Orchestrator
 ├── generate-combined-report.py # Combined report aggregator
+├── prod/                       # Production scripts
+│   └── gap-ga-validation.py   # GA readiness validation (standalone)
 ├── templates/                  # Jinja2 templates
 │   ├── aws-sts.html.j2
 │   ├── gcp-wif.html.j2
@@ -29,7 +31,8 @@ scripts/
 │   ├── versions-channels.html.j2
 │   ├── ocm-version-gate.html.j2
 │   ├── feature-gates.html.j2
-│   └── full-gap.html.j2
+│   ├── full-gap.html.j2
+│   └── ga-validation.html.j2
 └── lib/
     ├── common.py               # Utilities
     ├── openshift_releases.py   # Version resolution

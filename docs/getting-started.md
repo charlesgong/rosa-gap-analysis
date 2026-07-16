@@ -26,14 +26,16 @@ python3 -c "import yaml, jinja2; print('Dependencies OK')"
 ### Auto-Detect Versions (Recommended)
 
 ```bash
-# Run all analyses (AWS STS, GCP WIF, Feature Gates, OCP Gate Acks)
+# Run all analyses (all 8 checks)
 ./scripts/gap-all.sh
 
 # Individual analysis
 python3 ./scripts/gap-aws-sts.py
 python3 ./scripts/gap-gcp-wif.py
-python3 ./scripts/gap-feature-gates.py
 python3 ./scripts/gap-ocp-gate-ack.py
+python3 ./scripts/gap-versions-channels.py
+python3 ./scripts/gap-ocm-version-gate.py
+python3 ./scripts/gap-feature-gates.py
 ```
 
 **Auto-detection:** Compares latest stable → latest candidate
@@ -44,10 +46,13 @@ python3 ./scripts/gap-ocp-gate-ack.py
 # Full analysis
 ./scripts/gap-all.sh --baseline 4.21 --target 4.22
 
-# Individual scripts
+# Individual scripts (examples)
 python3 ./scripts/gap-aws-sts.py --baseline 4.21.6 --target 4.22.0-ec.3
-python3 ./scripts/gap-feature-gates.py --baseline 4.21 --target 4.22
+python3 ./scripts/gap-gcp-wif.py --baseline 4.21 --target 4.22
 python3 ./scripts/gap-ocp-gate-ack.py --baseline 4.21 --target 4.22
+python3 ./scripts/gap-versions-channels.py --version 4.22
+python3 ./scripts/gap-ocm-version-gate.py --version 4.22
+python3 ./scripts/gap-feature-gates.py --baseline 4.21 --target 4.22
 ```
 
 ### Environment Variables
