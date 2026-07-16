@@ -550,7 +550,7 @@ Exit Codes:
     validation_result = 'PASS'
     target_in_channel = len(channel_analysis['target_version_channels']) > 0
 
-    if not target_in_channel and (target_is_ga or baseline_is_ga):
+    if not target_in_channel and target_is_ga:
         validation_result = 'FAIL'
         log_error(f"Target {target_full} not found in any {target_minor} channel (next version after GA — must be available)")
     elif not target_in_channel:
